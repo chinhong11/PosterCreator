@@ -31,8 +31,10 @@ export function PosterPreview({ html, size, loading }: Props) {
     return () => ro.disconnect();
   }, [size.width, size.height]);
 
+  // <base> makes relative /assets image URLs resolve to the app origin
+  // (srcdoc documents otherwise have no usable base URL).
   const doc = html
-    ? `<!doctype html><html><head><meta charset="utf-8"><style>html,body{margin:0;padding:0}</style></head><body>${html}</body></html>`
+    ? `<!doctype html><html><head><meta charset="utf-8"><base href="${location.origin}/"><style>html,body{margin:0;padding:0}</style></head><body>${html}</body></html>`
     : "";
 
   return (

@@ -1,12 +1,22 @@
 import { nanoid } from "nanoid";
 import type { SessionImage, SessionState, PosterSize } from "@poster/shared";
+import { saveSession, loadAllSessions } from "./db.js";
 
 /**
- * In-memory session store (MVP). One session === one poster project:
- * its uploaded images, version snapshots, and chat history.
- * Swap this for SQLite in M4 for persistence across restarts.
+ * In-memory session cache backed by SQLite. One session === one poster project:
+ * its uploaded images, version snapshots, and chat history. The cache is warmed
+ * from the DB on startup; every mutation is persisted via persist().
  */
 const sessions = new Map<string, SessionState>();
+
+for (const s of loadAllSessions()) {
+  sessions.set(s.id, s);
+}
+
+/** Persist a session's current state. Call after any mutation. */
+export function persist(session: SessionState): void {
+  saveSession(session);
+}
 
 export function createSession(size: PosterSize): SessionState {
   const session: SessionState = {
@@ -17,6 +27,7 @@ export function createSession(size: PosterSize): SessionState {
     messages: [],
   };
   sessions.set(session.id, session);
+  persist(session);
   return session;
 }
 
@@ -30,6 +41,7 @@ export function addImage(sessionId: string, image: Omit<SessionImage, "placehold
   const placeholder = `{{IMAGE_${session.images.length + 1}}}`;
   const full: SessionImage = { ...image, placeholder };
   session.images.push(full);
+  persist(session);
   return full;
 }
 

@@ -56,7 +56,7 @@ PosterCreator/
     └── src/components # Dropzone, Preview, ChatPanel, VersionTimeline
 ```
 
-## Current status (M1–M3)
+## Current status (M1–M4)
 
 - ✅ Image upload, prompt, and end-to-end poster generation
 - ✅ Iterative refinement with conversation history (edits in place)
@@ -66,7 +66,25 @@ PosterCreator/
 - ✅ Print-quality PDF export (server-side Playwright, images inlined)
 - ✅ Poster sizes: A4/A3/Letter/Instagram presets **and** custom W×H
 - ✅ Resize mid-session — re-lays-out the current poster at the new dimensions
-- ⏳ Streaming "draws-in" preview, curated font bundle, multiple images, persistence (see `PLAN.md`)
+- ✅ **Multiple images** per poster (`{{IMAGE_1}}`, `{{IMAGE_2}}`, …)
+- ✅ **"Suggest 4 directions"** mode — pick a visual direction before designing
+- ✅ **Curated typography system** documented to the model (8 font families)
+- ✅ **Persistence** (SQLite) — sessions survive restarts and auto-resume
+- ✅ Per-IP rate limiting on the model-calling endpoints
+- ⏳ Streaming "draws-in" preview, embedded web fonts, deploy auth (see `PLAN.md`)
+
+### Notes on M4
+
+- **Typography** is a curated set of cross-platform font-family *stacks* (not
+  embedded binaries), documented in the system prompt so the model designs with
+  a consistent, high-quality type vocabulary. Exact glyphs depend on the
+  viewer's installed fonts; embedding `woff2` for pixel-identical preview/PDF is
+  a documented future step.
+- **Persistence** uses SQLite (`server/data/posters.db`, created on first run;
+  needs a native build of `better-sqlite3`). The client stores the last session
+  id in `localStorage` and auto-resumes it; use **New** to start fresh.
+- **Directions mode** is a first-turn-only toggle: it proposes four distinct
+  palette/type/mood directions, and your pick seeds the initial design.
 
 ### PDF export & Playwright
 

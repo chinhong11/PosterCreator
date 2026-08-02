@@ -1,4 +1,5 @@
 import type { PosterSize, SessionImage } from "@poster/shared";
+import { FONT_LIBRARY } from "@poster/shared";
 
 /**
  * Builds the system prompt that defines the poster-generation contract.
@@ -40,8 +41,13 @@ Rules for the poster HTML:
 - Root is a single \`<div id="poster">\` sized exactly ${size.width}px × ${size.height}px (${size.label}). Do not change these dimensions unless the user asks for a different size.
 - Everything is self-contained: inline all CSS via style attributes or a single \`<style>\` block INSIDE the poster div. No external stylesheets, no <link>, no <script>, no network requests, no remote fonts or images.
 - Use \`position: absolute\` within the relatively-positioned root for precise placement. Design at real pixel coordinates.
-- Fonts: use only web-safe CSS font stacks (e.g. Georgia, "Times New Roman", serif; Helvetica, Arial, sans-serif; "Courier New", monospace; Impact, sans-serif). Do not @import or @font-face remote fonts.
 - Decorative elements (shapes, frames, gradients, patterns) should be CSS or inline SVG.
+
+# Typography
+
+Do NOT @import or @font-face remote fonts. Use these curated font-family stacks inline (copy the stack exactly into a \`font-family\`). Pair a display family for headlines with a complementary family for body/details; commit to a type personality that fits the brief.
+
+${FONT_LIBRARY.map((f) => `- ${f.name} — ${f.role}\n    font-family: ${f.stack};`).join("\n")}
 
 # Uploaded images
 

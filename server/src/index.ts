@@ -9,15 +9,18 @@ import {
   isValidPosterSize,
   substitutePlaceholders,
   type CreateSessionResponse,
+  type DirectionsResponse,
   type GenerateResponse,
   type PosterSize,
   type ResizeResponse,
+  type SessionLoadResponse,
   type SessionState,
   type UploadResponse,
 } from "@poster/shared";
-import { createSession, getSession, addImage } from "./sessions.js";
-import { runDesignTurn, DesignError, type ImageBytes } from "./claude/generate.js";
+import { createSession, getSession, addImage, persist } from "./sessions.js";
+import { runDesignTurn, runDirections, DesignError, type ImageBytes } from "./claude/generate.js";
 import { renderPosterPdf } from "./export/pdf.js";
+import { listSummaries } from "./db.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOAD_DIR = path.join(__dirname, "..", "uploads");
@@ -42,50 +45,40 @@ const upload = multer({
   limits: { fileSize: 15 * 1024 * 1024 },
 });
 
-function baseUrl(req: express.Request): string {
-  return `${req.protocol}://${req.get("host")}`;
+// ---- Simple per-IP rate limiter for the model-calling endpoints ----
+const RATE_WINDOW_MS = 60_000;
+const RATE_MAX = 30;
+const hits = new Map<string, { count: number; resetAt: number }>();
+function rateLimit(req: express.Request, res: express.Response, next: express.NextFunction) {
+  const key = req.ip ?? "unknown";
+  const now = Date.now();
+  const entry = hits.get(key);
+  if (!entry || now > entry.resetAt) {
+    hits.set(key, { count: 1, resetAt: now + RATE_WINDOW_MS });
+    return next();
+  }
+  if (entry.count >= RATE_MAX) {
+    const retry = Math.ceil((entry.resetAt - now) / 1000);
+    res.setHeader("Retry-After", String(retry));
+    return res.status(429).json({ error: `Too many requests. Try again in ${retry}s.` });
+  }
+  entry.count++;
+  next();
 }
 
-/** Create a new poster session for a given size (preset or custom). */
-app.post("/api/session", (req, res) => {
-  const size = req.body?.size as PosterSize | undefined;
-  if (!isValidPosterSize(size)) {
-    return res.status(400).json({ error: "Invalid or missing poster size." });
-  }
-  const session = createSession(size);
-  const body: CreateSessionResponse = { sessionId: session.id };
-  res.json(body);
-});
+// ---- Helpers ----
 
-/** Upload an image to a session. Stored on disk, served from /assets. */
-app.post("/api/session/:id/image", upload.single("image"), (req, res) => {
-  const session = getSession(req.params.id);
-  if (!session) return res.status(404).json({ error: "Session not found." });
-  if (!req.file) return res.status(400).json({ error: "No image uploaded." });
-
-  const image = addImage(session.id, {
-    filename: req.file.originalname,
-    mediaType: req.file.mimetype,
-    url: `${baseUrl(req)}/assets/${req.file.filename}`,
-  });
-  if (!image) return res.status(404).json({ error: "Session not found." });
-
-  // Track the on-disk path so we can read bytes for vision input later.
-  diskPaths.set(image.url, path.join(UPLOAD_DIR, req.file.filename));
-
-  const body: UploadResponse = { image };
-  res.json(body);
-});
-
-// Maps a served image URL back to its file on disk (for vision input).
-const diskPaths = new Map<string, string>();
+/** Resolve an image's on-disk path from its /assets URL (host-independent). */
+function diskPathForImage(url: string): string {
+  return path.join(UPLOAD_DIR, path.basename(url));
+}
 
 /** Read uploaded image bytes for vision input. */
 function collectImageBytes(session: SessionState): ImageBytes[] {
   const out: ImageBytes[] = [];
   for (const img of session.images) {
-    const diskPath = diskPaths.get(img.url);
-    if (diskPath && fs.existsSync(diskPath)) {
+    const diskPath = diskPathForImage(img.url);
+    if (fs.existsSync(diskPath)) {
       out.push({
         placeholder: img.placeholder,
         mediaType: img.mediaType,
@@ -100,8 +93,8 @@ function collectImageBytes(session: SessionState): ImageBytes[] {
 function renderWithDataUris(session: SessionState, html: string): string {
   let out = html;
   for (const img of session.images) {
-    const diskPath = diskPaths.get(img.url);
-    if (diskPath && fs.existsSync(diskPath)) {
+    const diskPath = diskPathForImage(img.url);
+    if (fs.existsSync(diskPath)) {
       const b64 = fs.readFileSync(diskPath).toString("base64");
       out = out.split(img.placeholder).join(`data:${img.mediaType};base64,${b64}`);
     }
@@ -109,22 +102,98 @@ function renderWithDataUris(session: SessionState, html: string): string {
   return out;
 }
 
+// ---- Routes ----
+
+/** Create a new poster session for a given size (preset or custom). */
+app.post("/api/session", (req, res) => {
+  const size = req.body?.size as PosterSize | undefined;
+  if (!isValidPosterSize(size)) {
+    return res.status(400).json({ error: "Invalid or missing poster size." });
+  }
+  const session = createSession(size);
+  const body: CreateSessionResponse = { sessionId: session.id };
+  res.json(body);
+});
+
+/** List recent sessions (for resuming past posters). */
+app.get("/api/sessions", (_req, res) => {
+  res.json({ sessions: listSummaries() });
+});
+
+/** Load a session's full state and its latest rendered poster. */
+app.get("/api/session/:id", (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found." });
+  const latest = session.versions.at(-1);
+  const body: SessionLoadResponse = {
+    session,
+    renderedHtml: latest ? substitutePlaceholders(latest.html, session.images) : null,
+  };
+  res.json(body);
+});
+
+/** Upload an image to a session. Stored on disk, served from /assets. */
+app.post("/api/session/:id/image", upload.single("image"), (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found." });
+  if (!req.file) return res.status(400).json({ error: "No image uploaded." });
+
+  // Store a relative URL so it resolves regardless of host/proxy or restarts.
+  const image = addImage(session.id, {
+    filename: req.file.originalname,
+    mediaType: req.file.mimetype,
+    url: `/assets/${req.file.filename}`,
+  });
+  if (!image) return res.status(404).json({ error: "Session not found." });
+
+  const body: UploadResponse = { image };
+  res.json(body);
+});
+
+/** Suggest four distinct visual directions before the first design. */
+app.post("/api/session/:id/directions", rateLimit, async (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found." });
+  const brief = String(req.body?.prompt ?? "").trim();
+  if (!brief) return res.status(400).json({ error: "A brief is required." });
+
+  try {
+    const directions = await runDirections(brief, collectImageBytes(session));
+    const body: DirectionsResponse = { directions };
+    res.json(body);
+  } catch (err) {
+    if (err instanceof DesignError) return res.status(422).json({ error: err.message });
+    console.error("Directions failed:", err);
+    res.status(500).json({ error: "Couldn't suggest directions right now." });
+  }
+});
+
 /** Generate or refine the poster for a session. */
-app.post("/api/session/:id/generate", async (req, res) => {
+app.post("/api/session/:id/generate", rateLimit, async (req, res) => {
   const session = getSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found." });
 
   const prompt = String(req.body?.prompt ?? "").trim();
   if (!prompt) return res.status(400).json({ error: "A prompt is required." });
 
+  // Optional chosen visual direction (from "suggest 4 directions" mode).
+  const direction = req.body?.direction as { title?: string; description?: string } | undefined;
+  const effectivePrompt =
+    direction && session.versions.length === 0
+      ? `${prompt}\n\nUse this visual direction: ${direction.title} — ${direction.description}`
+      : prompt;
+
   try {
     // Vision input is attached only to the first turn by runDesignTurn.
     const imageBytes = collectImageBytes(session);
-    const version = await runDesignTurn(session, prompt, imageBytes);
+    const version = await runDesignTurn(session, effectivePrompt, imageBytes);
+    // Store the user-facing prompt (not the direction-augmented one) in history.
+    version.prompt = prompt;
 
     session.versions.push(version);
     session.messages.push({ role: "user", text: prompt });
     session.messages.push({ role: "assistant", text: version.reply });
+    persist(session);
 
     const body: GenerateResponse = {
       version,
@@ -151,6 +220,7 @@ app.post("/api/session/:id/rollback", (req, res) => {
   // Drop everything after the chosen version; new prompts branch from here.
   session.versions = session.versions.slice(0, idx + 1);
   session.messages = session.messages.slice(0, (idx + 1) * 2);
+  persist(session);
   const version = session.versions[idx];
   const body: GenerateResponse = {
     version,
@@ -160,7 +230,7 @@ app.post("/api/session/:id/rollback", (req, res) => {
 });
 
 /** Change the poster size. Re-lays-out the current design at the new size. */
-app.post("/api/session/:id/size", async (req, res) => {
+app.post("/api/session/:id/size", rateLimit, async (req, res) => {
   const session = getSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found." });
 
@@ -169,6 +239,7 @@ app.post("/api/session/:id/size", async (req, res) => {
     return res.status(400).json({ error: "Invalid poster size." });
   }
   session.size = size;
+  persist(session);
 
   // Nothing designed yet — just record the size; the first generate uses it.
   if (session.versions.length === 0) {
@@ -185,6 +256,7 @@ app.post("/api/session/:id/size", async (req, res) => {
     session.versions.push(version);
     session.messages.push({ role: "user", text: `Resize to ${size.label}` });
     session.messages.push({ role: "assistant", text: version.reply });
+    persist(session);
     const body: ResizeResponse = {
       size,
       version,

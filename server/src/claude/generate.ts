@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { nanoid } from "nanoid";
-import type { PosterVersion, SessionState } from "@poster/shared";
+import type { DesignDirection, PosterVersion, SessionState } from "@poster/shared";
 import { buildSystemPrompt } from "./systemPrompt.js";
 
 const MODEL = "claude-opus-5";
@@ -132,3 +132,57 @@ export async function runDesignTurn(
 }
 
 export class DesignError extends Error {}
+
+/**
+ * "Suggest 4 directions" mode: before designing, ask Claude for four distinct
+ * visual directions (palette / typeface / mood) so the user can pick one. This
+ * reliably produces variety instead of the model's default first instinct.
+ */
+export async function runDirections(
+  brief: string,
+  imageBytes: ImageBytes[],
+): Promise<DesignDirection[]> {
+  const system =
+    `You are an art director. Given a poster brief${imageBytes.length ? " and an image" : ""}, propose exactly FOUR distinct visual directions. ` +
+    `Each must differ meaningfully in palette, typography, and mood — not four variations of one idea. ` +
+    `Respond with ONLY a fenced \`\`\`json block containing an array of four objects, each: ` +
+    `{"title": string (2-4 words), "description": string (one sentence naming palette, type feel, and mood)}. No prose outside the block.`;
+
+  const content: Anthropic.ContentBlockParam[] = [
+    ...imageBytes.map(
+      (img) =>
+        ({
+          type: "image" as const,
+          source: {
+            type: "base64" as const,
+            media_type: img.mediaType as "image/png" | "image/jpeg" | "image/webp" | "image/gif",
+            data: img.base64,
+          },
+        }),
+    ),
+    { type: "text", text: `Brief: ${brief}` },
+  ];
+
+  const message = await client.messages
+    .stream({ model: MODEL, max_tokens: 4000, system, messages: [{ role: "user", content }] })
+    .finalMessage();
+
+  if (message.stop_reason === "refusal") {
+    throw new DesignError("Claude declined this request. Try rephrasing your brief.");
+  }
+
+  const textBlock = message.content.find((b) => b.type === "text");
+  const text = textBlock && textBlock.type === "text" ? textBlock.text : "";
+  const fence = /```json\s*([\s\S]*?)```/i.exec(text);
+  const raw = fence ? fence[1] : text;
+  try {
+    const parsed = JSON.parse(raw) as { title: string; description: string }[];
+    return parsed.slice(0, 4).map((d) => ({
+      id: nanoid(),
+      title: String(d.title ?? "").trim() || "Untitled direction",
+      description: String(d.description ?? "").trim(),
+    }));
+  } catch {
+    throw new DesignError("Couldn't parse the suggested directions. Try again.");
+  }
+}

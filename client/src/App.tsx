@@ -1,8 +1,9 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   POSTER_SIZES,
   customSize,
   type ChatMessage,
+  type DesignDirection,
   type PosterSize,
   type PosterSizeId,
   type PosterVersion,
@@ -11,16 +12,32 @@ import { ImageDropzone } from "./components/ImageDropzone.js";
 import { PosterPreview } from "./components/PosterPreview.js";
 import { ChatPanel } from "./components/ChatPanel.js";
 import { VersionTimeline } from "./components/VersionTimeline.js";
-import { createSession, uploadImage, generate, rollback, resize, exportPdf } from "./api.js";
+import { DirectionPicker } from "./components/DirectionPicker.js";
+import {
+  createSession,
+  uploadImage,
+  generate,
+  rollback,
+  resize,
+  exportPdf,
+  suggestDirections,
+  loadSession,
+} from "./api.js";
 import { exportPng } from "./lib/exportPoster.js";
+
+const LAST_KEY = "poster:lastSession";
+
+interface UploadedImage {
+  url: string;
+  preview: string;
+}
 
 export default function App() {
   const [sizeId, setSizeId] = useState<PosterSizeId>("a3-portrait");
   const [customW, setCustomW] = useState(1080);
   const [customH, setCustomH] = useState(1350);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const [imagePreview, setImagePreview] = useState<string | undefined>();
-  const [hasImage, setHasImage] = useState(false);
+  const [images, setImages] = useState<UploadedImage[]>([]);
   const [renderedHtml, setRenderedHtml] = useState<string | null>(null);
   const [versions, setVersions] = useState<PosterVersion[]>([]);
   const [currentVersionId, setCurrentVersionId] = useState<string | null>(null);
@@ -29,29 +46,85 @@ export default function App() {
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // "Suggest 4 directions" mode.
+  const [directionsMode, setDirectionsMode] = useState(false);
+  const [pendingDirections, setPendingDirections] = useState<DesignDirection[] | null>(null);
+  const [pendingBrief, setPendingBrief] = useState<string>("");
+
   const size = useMemo<PosterSize>(
     () => (sizeId === "custom" ? customSize(customW, customH) : POSTER_SIZES[sizeId]),
     [sizeId, customW, customH],
   );
   const started = versions.length > 0;
 
+  // Resume the last session on load, if any.
+  useEffect(() => {
+    const last = localStorage.getItem(LAST_KEY);
+    if (last) void resume(last);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const resume = async (id: string) => {
+    setBusy(true);
+    try {
+      const { session, renderedHtml: rendered } = await loadSession(id);
+      setSessionId(session.id);
+      setSizeId(session.size.id);
+      if (session.size.id === "custom") {
+        setCustomW(session.size.width);
+        setCustomH(session.size.height);
+      }
+      setImages(session.images.map((img) => ({ url: img.url, preview: img.url })));
+      setVersions(session.versions);
+      setMessages(session.messages);
+      setRenderedHtml(rendered);
+      setCurrentVersionId(session.versions.at(-1)?.id ?? null);
+    } catch {
+      localStorage.removeItem(LAST_KEY); // stale id
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const newPoster = () => {
+    localStorage.removeItem(LAST_KEY);
+    setSessionId(null);
+    setImages([]);
+    setRenderedHtml(null);
+    setVersions([]);
+    setCurrentVersionId(null);
+    setMessages([]);
+    setPendingDirections(null);
+    setPendingBrief("");
+    setError(null);
+  };
+
   const ensureSession = async (s: PosterSize): Promise<string> => {
     if (sessionId) return sessionId;
     const id = await createSession(s);
     setSessionId(id);
+    localStorage.setItem(LAST_KEY, id);
     return id;
   };
 
   const handleFile = async (file: File) => {
     setError(null);
-    setImagePreview(URL.createObjectURL(file));
+    const preview = URL.createObjectURL(file);
     try {
       const id = await ensureSession(size);
-      await uploadImage(id, file);
-      setHasImage(true);
+      const { image } = await uploadImage(id, file);
+      setImages((imgs) => [...imgs, { url: image.url, preview }]);
     } catch (e) {
       setError((e as Error).message);
     }
+  };
+
+  const doGenerate = async (id: string, prompt: string, direction?: DesignDirection) => {
+    const res = await generate(id, prompt, direction);
+    setRenderedHtml(res.renderedHtml);
+    setVersions((v) => [...v, res.version]);
+    setCurrentVersionId(res.version.id);
+    setMessages((m) => [...m, { role: "assistant", text: res.version.reply }]);
   };
 
   const handleSend = async (prompt: string) => {
@@ -60,14 +133,49 @@ export default function App() {
     setMessages((m) => [...m, { role: "user", text: prompt }]);
     try {
       const id = await ensureSession(size);
-      const res = await generate(id, prompt);
-      setRenderedHtml(res.renderedHtml);
-      setVersions((v) => [...v, res.version]);
-      setCurrentVersionId(res.version.id);
-      setMessages((m) => [...m, { role: "assistant", text: res.version.reply }]);
+      // First turn with directions mode on → propose directions before designing.
+      if (directionsMode && !started) {
+        const dirs = await suggestDirections(id, prompt);
+        setPendingDirections(dirs);
+        setPendingBrief(prompt);
+        setMessages((m) => [
+          ...m,
+          { role: "assistant", text: "Here are four directions — pick one to design." },
+        ]);
+      } else {
+        await doGenerate(id, prompt);
+      }
     } catch (e) {
       setError((e as Error).message);
       setMessages((m) => [...m, { role: "assistant", text: `⚠️ ${(e as Error).message}` }]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const pickDirection = async (d: DesignDirection) => {
+    if (!sessionId) return;
+    setPendingDirections(null);
+    setBusy(true);
+    setError(null);
+    setMessages((m) => [...m, { role: "user", text: `Direction: ${d.title}` }]);
+    try {
+      await doGenerate(sessionId, pendingBrief, d);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const skipDirections = async () => {
+    if (!sessionId) return;
+    setPendingDirections(null);
+    setBusy(true);
+    try {
+      await doGenerate(sessionId, pendingBrief);
+    } catch (e) {
+      setError((e as Error).message);
     } finally {
       setBusy(false);
     }
@@ -91,8 +199,6 @@ export default function App() {
     }
   };
 
-  // Change poster size. If a poster already exists, the server re-lays it out
-  // at the new dimensions and returns a new version.
   const applySize = async (s: PosterSize) => {
     setSizeId(s.id);
     if (s.id === "custom") {
@@ -123,7 +229,7 @@ export default function App() {
 
   const onSelectSize = (id: PosterSizeId) => {
     if (id === "custom") {
-      setSizeId("custom"); // reveal W/H inputs; user hits "Apply"
+      setSizeId("custom");
       return;
     }
     void applySize(POSTER_SIZES[id]);
@@ -156,7 +262,6 @@ export default function App() {
   const promptPlaceholder = started
     ? "Describe a tweak…  (⌘/Ctrl + Enter to send)"
     : "Describe the poster you want…  (⌘/Ctrl + Enter to send)";
-
   const canExport = !!renderedHtml && !busy;
 
   return (
@@ -164,6 +269,9 @@ export default function App() {
       <header className="app__header">
         <h1>Poster Creator</h1>
         <div className="app__controls">
+          <button onClick={newPoster} disabled={busy}>
+            New
+          </button>
           <label>
             Size
             <select
@@ -226,7 +334,16 @@ export default function App() {
 
       <main className="app__main">
         <section className="app__preview" ref={previewRef}>
-          <PosterPreview html={renderedHtml} size={size} loading={busy} />
+          {pendingDirections ? (
+            <DirectionPicker
+              directions={pendingDirections}
+              onPick={pickDirection}
+              onCancel={skipDirections}
+              disabled={busy}
+            />
+          ) : (
+            <PosterPreview html={renderedHtml} size={size} loading={busy} />
+          )}
           <VersionTimeline
             versions={versions}
             currentId={currentVersionId}
@@ -236,12 +353,27 @@ export default function App() {
         </section>
 
         <aside className="app__side">
-          <ImageDropzone onFile={handleFile} previewUrl={imagePreview} disabled={busy} />
-          {hasImage && <p className="app__note">Image added — it'll be designed into your poster.</p>}
+          <ImageDropzone onFile={handleFile} disabled={busy} />
+          {images.length > 0 && (
+            <div className="thumbs">
+              {images.map((img, i) => (
+                <img key={i} className="thumbs__item" src={img.preview} alt={`Image ${i + 1}`} />
+              ))}
+            </div>
+          )}
+          <label className="app__toggle">
+            <input
+              type="checkbox"
+              checked={directionsMode}
+              disabled={busy || started}
+              onChange={(e) => setDirectionsMode(e.target.checked)}
+            />
+            Suggest 4 directions before the first design
+          </label>
           <ChatPanel
             messages={messages}
             onSend={handleSend}
-            disabled={busy}
+            disabled={busy || !!pendingDirections}
             placeholder={promptPlaceholder}
           />
         </aside>

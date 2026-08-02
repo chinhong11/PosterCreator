@@ -95,6 +95,87 @@ export interface CreateSessionResponse {
   sessionId: string;
 }
 
+/** One proposed visual direction from "suggest 4 directions" mode. */
+export interface DesignDirection {
+  id: string;
+  title: string;
+  description: string;
+}
+
+export interface DirectionsResponse {
+  directions: DesignDirection[];
+}
+
+/** Lightweight session listing entry (for resuming past posters). */
+export interface SessionSummary {
+  id: string;
+  size: PosterSize;
+  versionCount: number;
+  title: string;
+  updatedAt: number;
+}
+
+/** Full session state returned when resuming, with the latest poster rendered. */
+export interface SessionLoadResponse {
+  session: SessionState;
+  renderedHtml: string | null;
+}
+
+/**
+ * Curated typography system. These are cross-platform font-family *stacks*
+ * (not embedded binaries), chosen so each named family resolves to a genuinely
+ * different, high-quality typeface on common systems. The model is told to use
+ * these stacks inline; preview and PDF both resolve them via the browser.
+ */
+export interface FontFamily {
+  name: string;
+  role: string;
+  stack: string;
+}
+
+export const FONT_LIBRARY: FontFamily[] = [
+  {
+    name: "Editorial Serif",
+    role: "Elegant magazine/headline serif; great for titles and posh brands.",
+    stack: `"Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif`,
+  },
+  {
+    name: "Classic Serif",
+    role: "Refined transitional serif; literary, timeless body and display.",
+    stack: `Baskerville, "Baskerville Old Face", "Hoefler Text", Garamond, "Times New Roman", serif`,
+  },
+  {
+    name: "Neo-Grotesque Sans",
+    role: "Clean modernist sans; Swiss/International Typographic feel.",
+    stack: `"Helvetica Neue", Helvetica, Arial, "Segoe UI", Roboto, sans-serif`,
+  },
+  {
+    name: "Humanist Sans",
+    role: "Warm, approachable sans; friendly editorial and lifestyle.",
+    stack: `Seravek, "Gill Sans Nova", Ubuntu, Calibri, "Segoe UI", system-ui, sans-serif`,
+  },
+  {
+    name: "Poster Display (Heavy)",
+    role: "Bold impactful display for big headlines and event posters.",
+    stack: `Impact, "Franklin Gothic Bold", "Arial Black", "Helvetica Neue", sans-serif`,
+  },
+  {
+    name: "Condensed Sans",
+    role: "Tall narrow sans; fits a lot of type, sporty/newsy energy.",
+    stack: `"Arial Narrow", "Helvetica Neue Condensed", "Roboto Condensed", sans-serif`,
+  },
+  {
+    name: "Typewriter Mono",
+    role: "Monospace; technical, retro, or zine aesthetics.",
+    stack: `"Courier New", Courier, "SFMono-Regular", ui-monospace, monospace`,
+  },
+  {
+    name: "Rounded Sans",
+    role: "Soft rounded sans; playful, modern, approachable.",
+    stack: `"SF Pro Rounded", "Varela Round", "Trebuchet MS", "Segoe UI", sans-serif`,
+  },
+];
+
 /** Substitute image placeholders in a design with their real URLs. */
 export function substitutePlaceholders(html: string, images: SessionImage[]): string {
   let out = html;
