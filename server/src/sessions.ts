@@ -1,5 +1,5 @@
 import { nanoid } from "nanoid";
-import type { SessionImage, SessionState, PosterSizeId } from "@poster/shared";
+import type { SessionImage, SessionState, PosterSize } from "@poster/shared";
 
 /**
  * In-memory session store (MVP). One session === one poster project:
@@ -8,10 +8,10 @@ import type { SessionImage, SessionState, PosterSizeId } from "@poster/shared";
  */
 const sessions = new Map<string, SessionState>();
 
-export function createSession(sizeId: PosterSizeId): SessionState {
+export function createSession(size: PosterSize): SessionState {
   const session: SessionState = {
     id: nanoid(),
-    sizeId,
+    size,
     images: [],
     versions: [],
     messages: [],

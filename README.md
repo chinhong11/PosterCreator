@@ -56,14 +56,29 @@ PosterCreator/
     └── src/components # Dropzone, Preview, ChatPanel, VersionTimeline
 ```
 
-## Current status (M1 + core of M2)
+## Current status (M1–M3)
 
 - ✅ Image upload, prompt, and end-to-end poster generation
 - ✅ Iterative refinement with conversation history (edits in place)
 - ✅ Version history with rollback / branch
 - ✅ Sandboxed iframe live preview, scaled to fit
-- ✅ PNG export (2× / 4×)
-- ⏳ Streaming "draws-in" preview, PDF export, font bundle, persistence (see `PLAN.md`)
+- ✅ PNG export (2× / 3× / 4×)
+- ✅ Print-quality PDF export (server-side Playwright, images inlined)
+- ✅ Poster sizes: A4/A3/Letter/Instagram presets **and** custom W×H
+- ✅ Resize mid-session — re-lays-out the current poster at the new dimensions
+- ⏳ Streaming "draws-in" preview, curated font bundle, multiple images, persistence (see `PLAN.md`)
+
+### PDF export & Playwright
+
+PDF export renders the poster server-side with headless Chromium at exact
+dimensions (a single-page, print-true PDF), inlining the uploaded image as a
+data URI so the render has no network dependency. Playwright's browser must be
+available:
+
+- Normal setup: `npx playwright install chromium` (once).
+- If a preinstalled browser cache exists (`PLAYWRIGHT_BROWSERS_PATH`), the
+  server auto-discovers it. You can also force a binary with
+  `PLAYWRIGHT_CHROMIUM_EXECUTABLE=/path/to/chrome`.
 
 ## Notes
 

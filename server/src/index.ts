@@ -6,15 +6,18 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { nanoid } from "nanoid";
 import {
-  POSTER_SIZES,
+  isValidPosterSize,
   substitutePlaceholders,
   type CreateSessionResponse,
   type GenerateResponse,
-  type PosterSizeId,
+  type PosterSize,
+  type ResizeResponse,
+  type SessionState,
   type UploadResponse,
 } from "@poster/shared";
 import { createSession, getSession, addImage } from "./sessions.js";
 import { runDesignTurn, DesignError, type ImageBytes } from "./claude/generate.js";
+import { renderPosterPdf } from "./export/pdf.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOAD_DIR = path.join(__dirname, "..", "uploads");
@@ -43,13 +46,13 @@ function baseUrl(req: express.Request): string {
   return `${req.protocol}://${req.get("host")}`;
 }
 
-/** Create a new poster session for a given size. */
+/** Create a new poster session for a given size (preset or custom). */
 app.post("/api/session", (req, res) => {
-  const sizeId = (req.body?.sizeId as PosterSizeId) ?? "a3-portrait";
-  if (!POSTER_SIZES[sizeId]) {
-    return res.status(400).json({ error: "Unknown poster size." });
+  const size = req.body?.size as PosterSize | undefined;
+  if (!isValidPosterSize(size)) {
+    return res.status(400).json({ error: "Invalid or missing poster size." });
   }
-  const session = createSession(sizeId);
+  const session = createSession(size);
   const body: CreateSessionResponse = { sessionId: session.id };
   res.json(body);
 });
@@ -77,6 +80,35 @@ app.post("/api/session/:id/image", upload.single("image"), (req, res) => {
 // Maps a served image URL back to its file on disk (for vision input).
 const diskPaths = new Map<string, string>();
 
+/** Read uploaded image bytes for vision input. */
+function collectImageBytes(session: SessionState): ImageBytes[] {
+  const out: ImageBytes[] = [];
+  for (const img of session.images) {
+    const diskPath = diskPaths.get(img.url);
+    if (diskPath && fs.existsSync(diskPath)) {
+      out.push({
+        placeholder: img.placeholder,
+        mediaType: img.mediaType,
+        base64: fs.readFileSync(diskPath).toString("base64"),
+      });
+    }
+  }
+  return out;
+}
+
+/** Substitute image placeholders with inline data URIs (for offline export). */
+function renderWithDataUris(session: SessionState, html: string): string {
+  let out = html;
+  for (const img of session.images) {
+    const diskPath = diskPaths.get(img.url);
+    if (diskPath && fs.existsSync(diskPath)) {
+      const b64 = fs.readFileSync(diskPath).toString("base64");
+      out = out.split(img.placeholder).join(`data:${img.mediaType};base64,${b64}`);
+    }
+  }
+  return out;
+}
+
 /** Generate or refine the poster for a session. */
 app.post("/api/session/:id/generate", async (req, res) => {
   const session = getSession(req.params.id);
@@ -86,20 +118,8 @@ app.post("/api/session/:id/generate", async (req, res) => {
   if (!prompt) return res.status(400).json({ error: "A prompt is required." });
 
   try {
-    // Read image bytes for vision input (only needed on the first turn, but
-    // cheap to prepare; runDesignTurn attaches them only to turn one).
-    const imageBytes: ImageBytes[] = [];
-    for (const img of session.images) {
-      const diskPath = diskPaths.get(img.url);
-      if (diskPath && fs.existsSync(diskPath)) {
-        imageBytes.push({
-          placeholder: img.placeholder,
-          mediaType: img.mediaType,
-          base64: fs.readFileSync(diskPath).toString("base64"),
-        });
-      }
-    }
-
+    // Vision input is attached only to the first turn by runDesignTurn.
+    const imageBytes = collectImageBytes(session);
     const version = await runDesignTurn(session, prompt, imageBytes);
 
     session.versions.push(version);
@@ -137,6 +157,70 @@ app.post("/api/session/:id/rollback", (req, res) => {
     renderedHtml: substitutePlaceholders(version.html, session.images),
   };
   res.json(body);
+});
+
+/** Change the poster size. Re-lays-out the current design at the new size. */
+app.post("/api/session/:id/size", async (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found." });
+
+  const size = req.body?.size as PosterSize | undefined;
+  if (!isValidPosterSize(size)) {
+    return res.status(400).json({ error: "Invalid poster size." });
+  }
+  session.size = size;
+
+  // Nothing designed yet — just record the size; the first generate uses it.
+  if (session.versions.length === 0) {
+    const body: ResizeResponse = { size };
+    return res.json(body);
+  }
+
+  // Re-lay-out the existing poster at the new dimensions (a re-prompt).
+  const prompt =
+    `Re-lay-out the poster for a new canvas size: ${size.width}px × ${size.height}px (${size.label}). ` +
+    `Keep the same content, colors, typography, and overall style — adapt the composition to fit the new dimensions.`;
+  try {
+    const version = await runDesignTurn(session, prompt, collectImageBytes(session));
+    session.versions.push(version);
+    session.messages.push({ role: "user", text: `Resize to ${size.label}` });
+    session.messages.push({ role: "assistant", text: version.reply });
+    const body: ResizeResponse = {
+      size,
+      version,
+      renderedHtml: substitutePlaceholders(version.html, session.images),
+    };
+    res.json(body);
+  } catch (err) {
+    if (err instanceof DesignError) return res.status(422).json({ error: err.message });
+    console.error("Resize failed:", err);
+    res.status(500).json({ error: "Something went wrong resizing the poster." });
+  }
+});
+
+/** Export a version (defaults to the latest) as a print-quality PDF. */
+app.post("/api/session/:id/export/pdf", async (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found." });
+
+  const versionId = req.body?.versionId as string | undefined;
+  const version = versionId
+    ? session.versions.find((v) => v.id === versionId)
+    : session.versions.at(-1);
+  if (!version) return res.status(404).json({ error: "No poster to export yet." });
+
+  try {
+    const html = renderWithDataUris(session, version.html);
+    const pdf = await renderPosterPdf(html, session.size.width, session.size.height);
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader("Content-Disposition", 'attachment; filename="poster.pdf"');
+    res.send(pdf);
+  } catch (err) {
+    console.error("PDF export failed:", err);
+    res.status(500).json({
+      error: "PDF export failed. Ensure Playwright's Chromium is available on the server.",
+    });
+  }
 });
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));

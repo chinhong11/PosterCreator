@@ -1,7 +1,7 @@
 // Shared types used by both the client and the server.
 
-/** Supported poster sizes. Dimensions are in CSS pixels at 96dpi (working resolution). */
-export type PosterSizeId =
+/** Built-in poster presets. Dimensions are in CSS pixels at 96dpi (working resolution). */
+export type PresetSizeId =
   | "a4-portrait"
   | "a4-landscape"
   | "a3-portrait"
@@ -10,6 +10,9 @@ export type PosterSizeId =
   | "instagram-post"
   | "instagram-story";
 
+/** A poster size is either a named preset or a user-defined custom size. */
+export type PosterSizeId = PresetSizeId | "custom";
+
 export interface PosterSize {
   id: PosterSizeId;
   label: string;
@@ -17,8 +20,12 @@ export interface PosterSize {
   height: number;
 }
 
+/** Bounds for custom poster dimensions (CSS px at 96dpi working resolution). */
+export const MIN_DIMENSION = 200;
+export const MAX_DIMENSION = 4000;
+
 /** Working resolution is 96dpi; export upscales via a scale factor. */
-export const POSTER_SIZES: Record<PosterSizeId, PosterSize> = {
+export const POSTER_SIZES: Record<PresetSizeId, PosterSize> = {
   "a4-portrait": { id: "a4-portrait", label: "A4 Portrait", width: 794, height: 1123 },
   "a4-landscape": { id: "a4-landscape", label: "A4 Landscape", width: 1123, height: 794 },
   "a3-portrait": { id: "a3-portrait", label: "A3 Portrait", width: 1123, height: 1587 },
@@ -59,7 +66,7 @@ export interface PosterVersion {
 
 export interface SessionState {
   id: string;
-  sizeId: PosterSizeId;
+  size: PosterSize;
   images: SessionImage[];
   versions: PosterVersion[];
   messages: ChatMessage[];
@@ -67,16 +74,17 @@ export interface SessionState {
 
 // ---- API request/response shapes ----
 
-export interface GenerateRequest {
-  sessionId: string;
-  prompt: string;
-  sizeId: PosterSizeId;
-}
-
 export interface GenerateResponse {
   version: PosterVersion;
   /** Design HTML with placeholders already substituted for real image URLs. */
   renderedHtml: string;
+}
+
+/** Response from a resize: carries a new version only if the poster was re-laid-out. */
+export interface ResizeResponse {
+  size: PosterSize;
+  version?: PosterVersion;
+  renderedHtml?: string;
 }
 
 export interface UploadResponse {
@@ -94,4 +102,32 @@ export function substitutePlaceholders(html: string, images: SessionImage[]): st
     out = out.split(img.placeholder).join(img.url);
   }
   return out;
+}
+
+/** Clamp a dimension into the allowed custom-size range, rounding to an integer. */
+export function clampDimension(n: number): number {
+  if (!Number.isFinite(n)) return MIN_DIMENSION;
+  return Math.round(Math.min(MAX_DIMENSION, Math.max(MIN_DIMENSION, n)));
+}
+
+/** Build a validated custom PosterSize from raw width/height inputs. */
+export function customSize(width: number, height: number): PosterSize {
+  const w = clampDimension(width);
+  const h = clampDimension(height);
+  return { id: "custom", label: `Custom ${w}×${h}`, width: w, height: h };
+}
+
+/** Validate a PosterSize received over the wire (presets or custom). */
+export function isValidPosterSize(size: unknown): size is PosterSize {
+  if (!size || typeof size !== "object") return false;
+  const s = size as PosterSize;
+  return (
+    typeof s.width === "number" &&
+    typeof s.height === "number" &&
+    s.width >= MIN_DIMENSION &&
+    s.width <= MAX_DIMENSION &&
+    s.height >= MIN_DIMENSION &&
+    s.height <= MAX_DIMENSION &&
+    typeof s.label === "string"
+  );
 }

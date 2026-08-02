@@ -14,7 +14,8 @@
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "multer": "^2.0.1",
-    "nanoid": "^5.0.7"
+    "nanoid": "^5.0.7",
+    "playwright": "^1.47.0"
   },
   "devDependencies": {
     "@types/cors": "^2.8.17",

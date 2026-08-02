@@ -1,7 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { nanoid } from "nanoid";
 import type { PosterVersion, SessionState } from "@poster/shared";
-import { POSTER_SIZES } from "@poster/shared";
 import { buildSystemPrompt } from "./systemPrompt.js";
 
 const MODEL = "claude-opus-5";
@@ -37,8 +36,7 @@ export async function runDesignTurn(
   prompt: string,
   imageBytes: ImageBytes[],
 ): Promise<PosterVersion> {
-  const size = POSTER_SIZES[session.sizeId];
-  const system = buildSystemPrompt(size, session.images);
+  const system = buildSystemPrompt(session.size, session.images);
 
   // Rebuild the conversation from version history. Each prior turn is a
   // user prompt + the assistant's reply and design HTML, so the model has the

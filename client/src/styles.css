@@ -76,6 +76,24 @@ button:disabled {
   cursor: not-allowed;
 }
 
+.app__custom {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.app__custom input {
+  width: 72px;
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+  font-size: 13px;
+}
+
 .app__export {
   display: flex;
   gap: 8px;
