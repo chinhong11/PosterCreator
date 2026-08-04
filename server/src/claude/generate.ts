@@ -115,8 +115,11 @@ export async function runDesignTurn(
   }
 
   const stream = client.messages.stream({
+    // opus-5 has thinking on by default and thinking counts toward max_tokens;
+    // keep the ceiling high so elaborate posters aren't truncated. Streaming
+    // means there's no HTTP-timeout cost to a large ceiling.
     model: MODEL,
-    max_tokens: 32000,
+    max_tokens: 64000,
     system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
     messages,
   });
@@ -194,7 +197,9 @@ export async function runDirections(
   ];
 
   const message = await client.messages
-    .stream({ model: MODEL, max_tokens: 4000, system, messages: [{ role: "user", content }] })
+    // Headroom for adaptive thinking (on by default) plus the JSON payload, so
+    // the block isn't truncated mid-array.
+    .stream({ model: MODEL, max_tokens: 8000, system, messages: [{ role: "user", content }] })
     .finalMessage();
 
   if (message.stop_reason === "refusal") {

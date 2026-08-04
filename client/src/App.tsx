@@ -199,12 +199,16 @@ export default function App() {
     setBusy(true);
     setError(null);
     try {
-      const res = await rollback(sessionId, versionId);
-      const idx = versions.findIndex((v) => v.id === versionId);
-      setVersions((v) => v.slice(0, idx + 1));
-      setMessages((m) => m.slice(0, (idx + 1) * 2));
-      setRenderedHtml(res.renderedHtml);
-      setCurrentVersionId(versionId);
+      await rollback(sessionId, versionId);
+      // Resync from the server's authoritative state instead of guessing the
+      // message/version alignment (directions mode and failed turns break the
+      // "2 messages per version" assumption).
+      const { session, renderedHtml: rendered } = await loadSession(sessionId);
+      setVersions(session.versions);
+      setMessages(session.messages);
+      setRenderedHtml(rendered);
+      setStreamingHtml(null);
+      setCurrentVersionId(session.versions.at(-1)?.id ?? null);
     } catch (e) {
       setError((e as Error).message);
     } finally {
