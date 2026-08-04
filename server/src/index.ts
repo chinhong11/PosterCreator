@@ -21,6 +21,7 @@ import { createSession, getSession, addImage, persist } from "./sessions.js";
 import { runDesignTurn, runDirections, DesignError, type ImageBytes } from "./claude/generate.js";
 import { renderPosterPdf } from "./export/pdf.js";
 import { listSummaries } from "./db.js";
+import { fontFaceCss } from "./fonts.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOAD_DIR = path.join(__dirname, "..", "uploads");
@@ -33,6 +34,14 @@ app.use(express.json({ limit: "10mb" }));
 
 // Serve uploaded images so the rendered poster can reference them by URL.
 app.use("/assets", express.static(UPLOAD_DIR));
+
+// Serve the embedded @font-face stylesheet (used by the live preview iframe).
+// Same fonts are inlined into PDF exports, so preview and print match.
+app.get("/api/fonts.css", (_req, res) => {
+  res.setHeader("Content-Type", "text/css");
+  res.setHeader("Cache-Control", "public, max-age=86400");
+  res.send(fontFaceCss());
+});
 
 const upload = multer({
   storage: multer.diskStorage({
@@ -209,6 +218,55 @@ app.post("/api/session/:id/generate", rateLimit, async (req, res) => {
   }
 });
 
+/** Streaming generate/refine over SSE — emits the poster HTML as it draws in. */
+app.post("/api/session/:id/generate/stream", rateLimit, async (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found." });
+
+  const prompt = String(req.body?.prompt ?? "").trim();
+  if (!prompt) return res.status(400).json({ error: "A prompt is required." });
+
+  const direction = req.body?.direction as { title?: string; description?: string } | undefined;
+  const effectivePrompt =
+    direction && session.versions.length === 0
+      ? `${prompt}\n\nUse this visual direction: ${direction.title} — ${direction.description}`
+      : prompt;
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+  });
+  const send = (obj: unknown) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+
+  try {
+    const imageBytes = collectImageBytes(session);
+    const version = await runDesignTurn(session, effectivePrompt, imageBytes, (partialHtml) => {
+      send({ type: "delta", html: substitutePlaceholders(partialHtml, session.images) });
+    });
+    version.prompt = prompt;
+
+    session.versions.push(version);
+    session.messages.push({ role: "user", text: prompt });
+    session.messages.push({ role: "assistant", text: version.reply });
+    persist(session);
+
+    send({
+      type: "done",
+      version,
+      renderedHtml: substitutePlaceholders(version.html, session.images),
+    });
+  } catch (err) {
+    const message =
+      err instanceof DesignError
+        ? err.message
+        : "Something went wrong generating the poster.";
+    if (!(err instanceof DesignError)) console.error("Streaming generation failed:", err);
+    send({ type: "error", error: message });
+  }
+  res.end();
+});
+
 /** Roll back to (branch from) an earlier version. */
 app.post("/api/session/:id/rollback", (req, res) => {
   const session = getSession(req.params.id);
@@ -283,7 +341,7 @@ app.post("/api/session/:id/export/pdf", async (req, res) => {
 
   try {
     const html = renderWithDataUris(session, version.html);
-    const pdf = await renderPosterPdf(html, session.size.width, session.size.height);
+    const pdf = await renderPosterPdf(html, session.size.width, session.size.height, fontFaceCss());
     res.setHeader("Content-Type", "application/pdf");
     res.setHeader("Content-Disposition", 'attachment; filename="poster.pdf"');
     res.send(pdf);

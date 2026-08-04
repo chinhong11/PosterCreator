@@ -32,9 +32,12 @@ export function PosterPreview({ html, size, loading }: Props) {
   }, [size.width, size.height]);
 
   // <base> makes relative /assets image URLs resolve to the app origin
-  // (srcdoc documents otherwise have no usable base URL).
+  // (srcdoc documents otherwise have no usable base URL). The fonts stylesheet
+  // provides the same embedded fonts used in PDF export, so preview matches print.
   const doc = html
-    ? `<!doctype html><html><head><meta charset="utf-8"><base href="${location.origin}/"><style>html,body{margin:0;padding:0}</style></head><body>${html}</body></html>`
+    ? `<!doctype html><html><head><meta charset="utf-8"><base href="${location.origin}/">` +
+      `<link rel="stylesheet" href="/api/fonts.css"><style>html,body{margin:0;padding:0}</style>` +
+      `</head><body>${html}</body></html>`
     : "";
 
   return (

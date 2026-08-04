@@ -56,35 +56,39 @@ PosterCreator/
     └── src/components # Dropzone, Preview, ChatPanel, VersionTimeline
 ```
 
-## Current status (M1–M4)
+## Current status (M1–M4, complete)
 
 - ✅ Image upload, prompt, and end-to-end poster generation
 - ✅ Iterative refinement with conversation history (edits in place)
 - ✅ Version history with rollback / branch
 - ✅ Sandboxed iframe live preview, scaled to fit
+- ✅ **Streaming** — the poster visibly "draws in" as the model generates it
 - ✅ PNG export (2× / 3× / 4×)
 - ✅ Print-quality PDF export (server-side Playwright, images inlined)
 - ✅ Poster sizes: A4/A3/Letter/Instagram presets **and** custom W×H
 - ✅ Resize mid-session — re-lays-out the current poster at the new dimensions
 - ✅ **Multiple images** per poster (`{{IMAGE_1}}`, `{{IMAGE_2}}`, …)
 - ✅ **"Suggest 4 directions"** mode — pick a visual direction before designing
-- ✅ **Curated typography system** documented to the model (8 font families)
+- ✅ **Embedded web fonts** — 8 OFL font families, identical in preview and PDF
 - ✅ **Persistence** (SQLite) — sessions survive restarts and auto-resume
 - ✅ Per-IP rate limiting on the model-calling endpoints
-- ⏳ Streaming "draws-in" preview, embedded web fonts, deploy auth (see `PLAN.md`)
 
-### Notes on M4
+### Notes
 
-- **Typography** is a curated set of cross-platform font-family *stacks* (not
-  embedded binaries), documented in the system prompt so the model designs with
-  a consistent, high-quality type vocabulary. Exact glyphs depend on the
-  viewer's installed fonts; embedding `woff2` for pixel-identical preview/PDF is
-  a documented future step.
+- **Streaming** uses SSE (`POST /api/session/:id/generate/stream`): the server
+  emits the poster HTML as it's generated and the preview re-renders it live.
+- **Typography** embeds eight OFL-licensed families (via `@fontsource`) as
+  `@font-face` woff2 data URIs, served at `/api/fonts.css` for the preview and
+  inlined into PDF exports — so preview and print use the *same* fonts. The
+  model is told which families are available and designs with them.
 - **Persistence** uses SQLite (`server/data/posters.db`, created on first run;
   needs a native build of `better-sqlite3`). The client stores the last session
   id in `localStorage` and auto-resumes it; use **New** to start fresh.
 - **Directions mode** is a first-turn-only toggle: it proposes four distinct
   palette/type/mood directions, and your pick seeds the initial design.
+
+Remaining ideas (not yet built): deploy-time auth for public hosting, and a
+"my posters" gallery UI over the existing `/api/sessions` list.
 
 ### PDF export & Playwright
 

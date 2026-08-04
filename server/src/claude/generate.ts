@@ -27,6 +27,22 @@ export function parseResponse(text: string): { reply: string; html: string | nul
 }
 
 /**
+ * Extract the poster HTML from a partial (still-streaming) response: everything
+ * after the opening ```html fence, up to a closing fence if present. Returns
+ * null before the fence opens. The fragment may be incomplete HTML — the
+ * browser renders it leniently, which produces the "draws in" effect.
+ */
+export function partialPosterHtml(text: string): string | null {
+  const open = text.indexOf("```html");
+  if (open === -1) return null;
+  let rest = text.slice(open + "```html".length);
+  const close = rest.indexOf("```");
+  if (close !== -1) rest = rest.slice(0, close);
+  const trimmed = rest.replace(/^\s+/, "");
+  return trimmed || null;
+}
+
+/**
  * Runs one design turn. Builds the message history from prior versions so the
  * model edits the current poster in place, passes the uploaded image(s) as
  * vision input on the first turn, and streams to avoid HTTP timeouts.
@@ -35,6 +51,7 @@ export async function runDesignTurn(
   session: SessionState,
   prompt: string,
   imageBytes: ImageBytes[],
+  onPartial?: (partialHtml: string) => void,
 ): Promise<PosterVersion> {
   const system = buildSystemPrompt(session.size, session.images);
 
@@ -103,6 +120,19 @@ export async function runDesignTurn(
     system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
     messages,
   });
+
+  // Emit the poster HTML as it streams in (throttled by growth) for a
+  // "draws in" preview. The final HTML is still taken from finalMessage().
+  if (onPartial) {
+    let lastLen = 0;
+    stream.on("text", (_delta, snapshot) => {
+      const html = partialPosterHtml(snapshot);
+      if (html && html.length - lastLen >= 120) {
+        lastLen = html.length;
+        onPartial(html);
+      }
+    });
+  }
 
   const message = await stream.finalMessage();
 

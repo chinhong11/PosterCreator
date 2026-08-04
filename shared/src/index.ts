@@ -133,46 +133,48 @@ export interface FontFamily {
   stack: string;
 }
 
+// The first family in each stack is embedded by the app (@font-face, served at
+// /api/fonts.css and inlined into PDFs), so preview and export render identically.
 export const FONT_LIBRARY: FontFamily[] = [
   {
     name: "Editorial Serif",
-    role: "Elegant magazine/headline serif; great for titles and posh brands.",
-    stack: `"Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif`,
+    role: "Elegant high-contrast serif; great for titles and posh brands.",
+    stack: `"Playfair Display", "Iowan Old Style", Georgia, serif`,
   },
   {
     name: "Classic Serif",
-    role: "Refined transitional serif; literary, timeless body and display.",
-    stack: `Baskerville, "Baskerville Old Face", "Hoefler Text", Garamond, "Times New Roman", serif`,
+    role: "Refined old-style serif; literary, timeless body and display.",
+    stack: `"EB Garamond", Baskerville, "Times New Roman", serif`,
   },
   {
     name: "Neo-Grotesque Sans",
     role: "Clean modernist sans; Swiss/International Typographic feel.",
-    stack: `"Helvetica Neue", Helvetica, Arial, "Segoe UI", Roboto, sans-serif`,
+    stack: `"Archivo", "Helvetica Neue", Arial, sans-serif`,
   },
   {
     name: "Humanist Sans",
     role: "Warm, approachable sans; friendly editorial and lifestyle.",
-    stack: `Seravek, "Gill Sans Nova", Ubuntu, Calibri, "Segoe UI", system-ui, sans-serif`,
+    stack: `"Mulish", "Segoe UI", system-ui, sans-serif`,
   },
   {
     name: "Poster Display (Heavy)",
-    role: "Bold impactful display for big headlines and event posters.",
-    stack: `Impact, "Franklin Gothic Bold", "Arial Black", "Helvetica Neue", sans-serif`,
+    role: "Tall, bold condensed display for big impactful headlines.",
+    stack: `"Anton", Impact, "Arial Black", sans-serif`,
   },
   {
     name: "Condensed Sans",
-    role: "Tall narrow sans; fits a lot of type, sporty/newsy energy.",
-    stack: `"Arial Narrow", "Helvetica Neue Condensed", "Roboto Condensed", sans-serif`,
+    role: "Narrow uppercase-friendly sans; sporty/newsy headline energy.",
+    stack: `"Oswald", "Arial Narrow", sans-serif`,
   },
   {
     name: "Typewriter Mono",
     role: "Monospace; technical, retro, or zine aesthetics.",
-    stack: `"Courier New", Courier, "SFMono-Regular", ui-monospace, monospace`,
+    stack: `"Space Mono", "Courier New", monospace`,
   },
   {
     name: "Rounded Sans",
-    role: "Soft rounded sans; playful, modern, approachable.",
-    stack: `"SF Pro Rounded", "Varela Round", "Trebuchet MS", "Segoe UI", sans-serif`,
+    role: "Soft geometric rounded sans; playful, modern, approachable.",
+    stack: `"Quicksand", "Trebuchet MS", sans-serif`,
   },
 ];
 

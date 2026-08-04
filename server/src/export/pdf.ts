@@ -60,16 +60,20 @@ export async function renderPosterPdf(
   posterHtml: string,
   width: number,
   height: number,
+  fontCss = "",
 ): Promise<Buffer> {
   const doc = `<!doctype html><html><head><meta charset="utf-8"><style>
     @page { size: ${width}px ${height}px; margin: 0; }
     html, body { margin: 0; padding: 0; }
+    ${fontCss}
   </style></head><body>${posterHtml}</body></html>`;
 
   const browser = await getBrowser();
   const page = await browser.newPage({ viewport: { width, height } });
   try {
     await page.setContent(doc, { waitUntil: "networkidle" });
+    // Ensure embedded @font-face fonts are ready before rasterizing.
+    await page.evaluate("document.fonts && document.fonts.ready");
     const pdf = await page.pdf({
       width: `${width}px`,
       height: `${height}px`,

@@ -16,7 +16,7 @@ import { DirectionPicker } from "./components/DirectionPicker.js";
 import {
   createSession,
   uploadImage,
-  generate,
+  streamGenerate,
   rollback,
   resize,
   exportPdf,
@@ -39,6 +39,7 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [images, setImages] = useState<UploadedImage[]>([]);
   const [renderedHtml, setRenderedHtml] = useState<string | null>(null);
+  const [streamingHtml, setStreamingHtml] = useState<string | null>(null);
   const [versions, setVersions] = useState<PosterVersion[]>([]);
   const [currentVersionId, setCurrentVersionId] = useState<string | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -91,6 +92,7 @@ export default function App() {
     setSessionId(null);
     setImages([]);
     setRenderedHtml(null);
+    setStreamingHtml(null);
     setVersions([]);
     setCurrentVersionId(null);
     setMessages([]);
@@ -119,13 +121,24 @@ export default function App() {
     }
   };
 
-  const doGenerate = async (id: string, prompt: string, direction?: DesignDirection) => {
-    const res = await generate(id, prompt, direction);
-    setRenderedHtml(res.renderedHtml);
-    setVersions((v) => [...v, res.version]);
-    setCurrentVersionId(res.version.id);
-    setMessages((m) => [...m, { role: "assistant", text: res.version.reply }]);
-  };
+  const doGenerate = (id: string, prompt: string, direction?: DesignDirection) =>
+    new Promise<void>((resolve, reject) => {
+      streamGenerate(id, prompt, direction, {
+        onDelta: (html) => setStreamingHtml(html),
+        onDone: (res) => {
+          setStreamingHtml(null);
+          setRenderedHtml(res.renderedHtml);
+          setVersions((v) => [...v, res.version]);
+          setCurrentVersionId(res.version.id);
+          setMessages((m) => [...m, { role: "assistant", text: res.version.reply }]);
+          resolve();
+        },
+        onError: (msg) => {
+          setStreamingHtml(null);
+          reject(new Error(msg));
+        },
+      }).catch(reject);
+    });
 
   const handleSend = async (prompt: string) => {
     setError(null);
@@ -342,7 +355,7 @@ export default function App() {
               disabled={busy}
             />
           ) : (
-            <PosterPreview html={renderedHtml} size={size} loading={busy} />
+            <PosterPreview html={streamingHtml ?? renderedHtml} size={size} loading={busy} />
           )}
           <VersionTimeline
             versions={versions}

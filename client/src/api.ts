@@ -51,6 +51,54 @@ export async function generate(
   return json<GenerateResponse>(res);
 }
 
+export interface StreamHandlers {
+  onDelta: (html: string) => void;
+  onDone: (res: GenerateResponse) => void;
+  onError: (message: string) => void;
+}
+
+/**
+ * Streaming generate over SSE: onDelta fires with partial poster HTML as it
+ * draws in; onDone fires with the final version; onError on failure.
+ */
+export async function streamGenerate(
+  sessionId: string,
+  prompt: string,
+  direction: DesignDirection | undefined,
+  handlers: StreamHandlers,
+): Promise<void> {
+  const res = await fetch(`/api/session/${sessionId}/generate/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt, direction }),
+  });
+  if (!res.ok || !res.body) {
+    const body = await res.json().catch(() => ({ error: res.statusText }));
+    handlers.onError(body.error ?? "Request failed");
+    return;
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    let sep: number;
+    while ((sep = buffer.indexOf("\n\n")) >= 0) {
+      const chunk = buffer.slice(0, sep);
+      buffer = buffer.slice(sep + 2);
+      const line = chunk.split("\n").find((l) => l.startsWith("data:"));
+      if (!line) continue;
+      const evt = JSON.parse(line.slice(5).trim());
+      if (evt.type === "delta") handlers.onDelta(evt.html);
+      else if (evt.type === "done") handlers.onDone(evt as GenerateResponse);
+      else if (evt.type === "error") handlers.onError(evt.error);
+    }
+  }
+}
+
 export async function suggestDirections(
   sessionId: string,
   prompt: string,

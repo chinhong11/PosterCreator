@@ -45,7 +45,7 @@ Rules for the poster HTML:
 
 # Typography
 
-Do NOT @import or @font-face remote fonts. Use these curated font-family stacks inline (copy the stack exactly into a \`font-family\`). Pair a display family for headlines with a complementary family for body/details; commit to a type personality that fits the brief.
+The app embeds the lead font of each family below (they are guaranteed available — do NOT @import or @font-face any remote fonts). Use these curated font-family stacks inline (copy the stack exactly into a \`font-family\`). Pair a display family for headlines with a complementary family for body/details; commit to a type personality that fits the brief.
 
 ${FONT_LIBRARY.map((f) => `- ${f.name} — ${f.role}\n    font-family: ${f.stack};`).join("\n")}
 
