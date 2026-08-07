@@ -2,12 +2,11 @@ import { useCallback, useRef, useState } from "react";
 
 interface Props {
   onFile: (file: File) => void;
-  previewUrl?: string;
   disabled?: boolean;
 }
 
-/** Drag-and-drop (or click-to-browse) image upload with a thumbnail preview. */
-export function ImageDropzone({ onFile, previewUrl, disabled }: Props) {
+/** Drag-and-drop (or click-to-browse) image upload. */
+export function ImageDropzone({ onFile, disabled }: Props) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragging, setDragging] = useState(false);
 
@@ -41,14 +40,10 @@ export function ImageDropzone({ onFile, previewUrl, disabled }: Props) {
         hidden
         onChange={(e) => handleFiles(e.target.files)}
       />
-      {previewUrl ? (
-        <img className="dropzone__preview" src={previewUrl} alt="Uploaded" />
-      ) : (
-        <div className="dropzone__hint">
-          <strong>Drop an image</strong>
-          <span>or click to browse</span>
-        </div>
-      )}
+      <div className="dropzone__hint">
+        <strong>Drop an image</strong>
+        <span>or click to browse</span>
+      </div>
     </div>
   );
 }

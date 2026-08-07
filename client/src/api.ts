@@ -140,18 +140,37 @@ export async function resize(sessionId: string, size: PosterSize): Promise<Resiz
   return json<ResizeResponse>(res);
 }
 
-/** Request a print-quality PDF and trigger a browser download. */
-export async function exportPdf(sessionId: string): Promise<void> {
-  const res = await fetch(`/api/session/${sessionId}/export/pdf`, { method: "POST" });
+/** Download a server-rendered export (PNG or PDF) — exact font/PDF fidelity. */
+async function downloadExport(
+  sessionId: string,
+  format: "pdf" | "png",
+  filename: string,
+  body: Record<string, unknown> = {},
+): Promise<void> {
+  const res = await fetch(`/api/session/${sessionId}/export/${format}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
   if (!res.ok) {
-    const body = await res.json().catch(() => ({ error: res.statusText }));
-    throw new Error(body.error ?? "PDF export failed");
+    const err = await res.json().catch(() => ({ error: res.statusText }));
+    throw new Error(err.error ?? "Export failed");
   }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = "poster.pdf";
+  a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+/** Request a print-quality PDF and trigger a browser download. */
+export function exportPdf(sessionId: string): Promise<void> {
+  return downloadExport(sessionId, "pdf", "poster.pdf");
+}
+
+/** Request a PNG at the given scale (server-rendered) and download it. */
+export function exportPng(sessionId: string, scale: number): Promise<void> {
+  return downloadExport(sessionId, "png", `poster@${scale}x.png`, { scale });
 }

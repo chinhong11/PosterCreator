@@ -19,7 +19,7 @@ import {
 } from "@poster/shared";
 import { createSession, getSession, addImage, persist } from "./sessions.js";
 import { runDesignTurn, runDirections, DesignError, type ImageBytes } from "./claude/generate.js";
-import { renderPosterPdf } from "./export/pdf.js";
+import { renderPosterPdf, renderPosterPng } from "./export/render.js";
 import { listSummaries } from "./db.js";
 import { fontFaceCss } from "./fonts.js";
 
@@ -29,6 +29,15 @@ fs.mkdirSync(UPLOAD_DIR, { recursive: true });
 
 const PORT = Number(process.env.PORT ?? 8787);
 const app = express();
+
+// Behind a reverse proxy, set TRUST_PROXY so req.ip reflects the real client
+// (else the rate limiter keys every request to the proxy's IP). Value is
+// "true", a hop count, or a subnet — see Express "trust proxy" docs.
+if (process.env.TRUST_PROXY) {
+  const tp = process.env.TRUST_PROXY;
+  app.set("trust proxy", tp === "true" ? true : /^\d+$/.test(tp) ? Number(tp) : tp);
+}
+
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
 
@@ -237,13 +246,22 @@ app.post("/api/session/:id/generate/stream", rateLimit, async (req, res) => {
     "Cache-Control": "no-cache",
     Connection: "keep-alive",
   });
-  const send = (obj: unknown) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  // Abort the model request if the client disconnects mid-stream.
+  const ac = new AbortController();
+  req.on("close", () => ac.abort());
+  const send = (obj: unknown) => {
+    if (!res.writableEnded) res.write(`data: ${JSON.stringify(obj)}\n\n`);
+  };
 
   try {
     const imageBytes = collectImageBytes(session);
-    const version = await runDesignTurn(session, effectivePrompt, imageBytes, (partialHtml) => {
-      send({ type: "delta", html: substitutePlaceholders(partialHtml, session.images) });
-    });
+    const version = await runDesignTurn(
+      session,
+      effectivePrompt,
+      imageBytes,
+      (partialHtml) => send({ type: "delta", html: substitutePlaceholders(partialHtml, session.images) }),
+      ac.signal,
+    );
     version.prompt = prompt;
 
     session.versions.push(version);
@@ -257,14 +275,17 @@ app.post("/api/session/:id/generate/stream", rateLimit, async (req, res) => {
       renderedHtml: substitutePlaceholders(version.html, session.images),
     });
   } catch (err) {
-    const message =
-      err instanceof DesignError
-        ? err.message
-        : "Something went wrong generating the poster.";
-    if (!(err instanceof DesignError)) console.error("Streaming generation failed:", err);
-    send({ type: "error", error: message });
+    // Client disconnected — nothing to report, nothing persisted.
+    if (!ac.signal.aborted) {
+      const message =
+        err instanceof DesignError
+          ? err.message
+          : "Something went wrong generating the poster.";
+      if (!(err instanceof DesignError)) console.error("Streaming generation failed:", err);
+      send({ type: "error", error: message });
+    }
   }
-  res.end();
+  if (!res.writableEnded) res.end();
 });
 
 /** Roll back to (branch from) an earlier version. */
@@ -328,15 +349,15 @@ app.post("/api/session/:id/size", rateLimit, async (req, res) => {
   }
 });
 
+function versionToExport(session: SessionState, versionId?: string) {
+  return versionId ? session.versions.find((v) => v.id === versionId) : session.versions.at(-1);
+}
+
 /** Export a version (defaults to the latest) as a print-quality PDF. */
 app.post("/api/session/:id/export/pdf", async (req, res) => {
   const session = getSession(req.params.id);
   if (!session) return res.status(404).json({ error: "Session not found." });
-
-  const versionId = req.body?.versionId as string | undefined;
-  const version = versionId
-    ? session.versions.find((v) => v.id === versionId)
-    : session.versions.at(-1);
+  const version = versionToExport(session, req.body?.versionId);
   if (!version) return res.status(404).json({ error: "No poster to export yet." });
 
   try {
@@ -349,6 +370,28 @@ app.post("/api/session/:id/export/pdf", async (req, res) => {
     console.error("PDF export failed:", err);
     res.status(500).json({
       error: "PDF export failed. Ensure Playwright's Chromium is available on the server.",
+    });
+  }
+});
+
+/** Export a version (defaults to the latest) as a PNG at 2×/3×/4×. */
+app.post("/api/session/:id/export/png", async (req, res) => {
+  const session = getSession(req.params.id);
+  if (!session) return res.status(404).json({ error: "Session not found." });
+  const version = versionToExport(session, req.body?.versionId);
+  if (!version) return res.status(404).json({ error: "No poster to export yet." });
+
+  const scale = Math.min(4, Math.max(1, Number(req.body?.scale) || 2));
+  try {
+    const html = renderWithDataUris(session, version.html);
+    const png = await renderPosterPng(html, session.size.width, session.size.height, scale, fontFaceCss());
+    res.setHeader("Content-Type", "image/png");
+    res.setHeader("Content-Disposition", `attachment; filename="poster@${scale}x.png"`);
+    res.send(png);
+  } catch (err) {
+    console.error("PNG export failed:", err);
+    res.status(500).json({
+      error: "PNG export failed. Ensure Playwright's Chromium is available on the server.",
     });
   }
 });

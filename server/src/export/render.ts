@@ -51,6 +51,15 @@ async function getBrowser(): Promise<Browser> {
   return browserPromise;
 }
 
+/** Wrap self-contained poster HTML in a document with the embedded font CSS. */
+function posterDoc(posterHtml: string, extraCss = ""): string {
+  return (
+    `<!doctype html><html><head><meta charset="utf-8"><style>` +
+    `html,body{margin:0;padding:0}${extraCss}` +
+    `</style></head><body>${posterHtml}</body></html>`
+  );
+}
+
 /**
  * Renders a self-contained poster HTML document to a single-page, print-true
  * PDF at exactly the poster's pixel dimensions. Images should already be inlined
@@ -62,26 +71,46 @@ export async function renderPosterPdf(
   height: number,
   fontCss = "",
 ): Promise<Buffer> {
-  const doc = `<!doctype html><html><head><meta charset="utf-8"><style>
-    @page { size: ${width}px ${height}px; margin: 0; }
-    html, body { margin: 0; padding: 0; }
-    ${fontCss}
-  </style></head><body>${posterHtml}</body></html>`;
-
+  const doc = posterDoc(posterHtml, `@page{size:${width}px ${height}px;margin:0}${fontCss}`);
   const browser = await getBrowser();
   const page = await browser.newPage({ viewport: { width, height } });
   try {
     await page.setContent(doc, { waitUntil: "networkidle" });
-    // Ensure embedded @font-face fonts are ready before rasterizing.
     await page.evaluate("document.fonts && document.fonts.ready");
-    const pdf = await page.pdf({
+    return await page.pdf({
       width: `${width}px`,
       height: `${height}px`,
       printBackground: true,
       pageRanges: "1",
       margin: { top: "0", bottom: "0", left: "0", right: "0" },
     });
-    return pdf;
+  } finally {
+    await page.close();
+  }
+}
+
+/**
+ * Renders the poster to a PNG at `scale`× resolution using the same headless
+ * Chromium and embedded fonts as the PDF path — so the PNG matches the preview
+ * and the PDF exactly (client-side rasterization can miss the iframe's fonts).
+ */
+export async function renderPosterPng(
+  posterHtml: string,
+  width: number,
+  height: number,
+  scale = 2,
+  fontCss = "",
+): Promise<Buffer> {
+  const doc = posterDoc(posterHtml, fontCss);
+  const browser = await getBrowser();
+  const page = await browser.newPage({ viewport: { width, height }, deviceScaleFactor: scale });
+  try {
+    await page.setContent(doc, { waitUntil: "networkidle" });
+    await page.evaluate("document.fonts && document.fonts.ready");
+    const el = await page.$("#poster");
+    return el
+      ? await el.screenshot({ type: "png" })
+      : await page.screenshot({ type: "png", clip: { x: 0, y: 0, width, height } });
   } finally {
     await page.close();
   }

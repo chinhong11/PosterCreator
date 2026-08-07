@@ -62,9 +62,9 @@ PosterCreator/
 - ✅ Iterative refinement with conversation history (edits in place)
 - ✅ Version history with rollback / branch
 - ✅ Sandboxed iframe live preview, scaled to fit
-- ✅ **Streaming** — the poster visibly "draws in" as the model generates it
-- ✅ PNG export (2× / 3× / 4×)
-- ✅ Print-quality PDF export (server-side Playwright, images inlined)
+- ✅ **Streaming** — the poster visibly "draws in" (aborts the model request if you disconnect)
+- ✅ **PNG & PDF export** — both server-rendered (Playwright), so exports match
+  the preview exactly, embedded fonts included
 - ✅ Poster sizes: A4/A3/Letter/Instagram presets **and** custom W×H
 - ✅ Resize mid-session — re-lays-out the current poster at the new dimensions
 - ✅ **Multiple images** per poster (`{{IMAGE_1}}`, `{{IMAGE_2}}`, …)
@@ -77,23 +77,28 @@ PosterCreator/
 
 - **Streaming** uses SSE (`POST /api/session/:id/generate/stream`): the server
   emits the poster HTML as it's generated and the preview re-renders it live.
+- **Exports** are all server-rendered with the same headless Chromium and the
+  same embedded fonts, so PNG and PDF match the live preview exactly (client-side
+  rasterization can miss the sandboxed iframe's fonts). PNG at 2×/3×/4×; PDF is a
+  single-page, print-true document at the poster's exact dimensions.
 - **Typography** embeds eight OFL-licensed families (via `@fontsource`) as
   `@font-face` woff2 data URIs, served at `/api/fonts.css` for the preview and
-  inlined into PDF exports — so preview and print use the *same* fonts. The
-  model is told which families are available and designs with them.
+  inlined into exports. The model is told which families are available.
 - **Persistence** uses SQLite (`server/data/posters.db`, created on first run;
   needs a native build of `better-sqlite3`). The client stores the last session
   id in `localStorage` and auto-resumes it; use **New** to start fresh.
 - **Directions mode** is a first-turn-only toggle: it proposes four distinct
   palette/type/mood directions, and your pick seeds the initial design.
+- **Deploying behind a proxy?** Set `TRUST_PROXY` (see `.env.example`) so the
+  per-IP rate limiter sees the real client IP rather than the proxy's.
 
-Remaining ideas (not yet built): deploy-time auth for public hosting, and a
-"my posters" gallery UI over the existing `/api/sessions` list.
+Remaining idea (not yet built): a "my posters" gallery UI over the existing
+`/api/sessions` list.
 
-### PDF export & Playwright
+### Export rendering & Playwright
 
-PDF export renders the poster server-side with headless Chromium at exact
-dimensions (a single-page, print-true PDF), inlining the uploaded image as a
+Exports render the poster server-side with headless Chromium at exact
+dimensions, inlining the uploaded image as a
 data URI so the render has no network dependency. Playwright's browser must be
 available:
 

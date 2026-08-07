@@ -52,6 +52,7 @@ export async function runDesignTurn(
   prompt: string,
   imageBytes: ImageBytes[],
   onPartial?: (partialHtml: string) => void,
+  signal?: AbortSignal,
 ): Promise<PosterVersion> {
   const system = buildSystemPrompt(session.size, session.images);
 
@@ -114,15 +115,18 @@ export async function runDesignTurn(
     messages.push({ role: "user", content: prompt });
   }
 
-  const stream = client.messages.stream({
-    // opus-5 has thinking on by default and thinking counts toward max_tokens;
-    // keep the ceiling high so elaborate posters aren't truncated. Streaming
-    // means there's no HTTP-timeout cost to a large ceiling.
-    model: MODEL,
-    max_tokens: 64000,
-    system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
-    messages,
-  });
+  const stream = client.messages.stream(
+    {
+      // opus-5 has thinking on by default and thinking counts toward max_tokens;
+      // keep the ceiling high so elaborate posters aren't truncated. Streaming
+      // means there's no HTTP-timeout cost to a large ceiling.
+      model: MODEL,
+      max_tokens: 64000,
+      system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+      messages,
+    },
+    { signal }, // aborts the request if the client disconnects
+  );
 
   // Emit the poster HTML as it streams in (throttled by growth) for a
   // "draws in" preview. The final HTML is still taken from finalMessage().

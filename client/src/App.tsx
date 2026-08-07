@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   POSTER_SIZES,
   customSize,
@@ -20,10 +20,10 @@ import {
   rollback,
   resize,
   exportPdf,
+  exportPng,
   suggestDirections,
   loadSession,
 } from "./api.js";
-import { exportPng } from "./lib/exportPoster.js";
 
 const LAST_KEY = "poster:lastSession";
 
@@ -148,13 +148,11 @@ export default function App() {
       const id = await ensureSession(size);
       // First turn with directions mode on → propose directions before designing.
       if (directionsMode && !started) {
+        // The picker (in the preview area) conveys the directions; don't add
+        // client-only chat bubbles that would desync from server history.
         const dirs = await suggestDirections(id, prompt);
         setPendingDirections(dirs);
         setPendingBrief(prompt);
-        setMessages((m) => [
-          ...m,
-          { role: "assistant", text: "Here are four directions — pick one to design." },
-        ]);
       } else {
         await doGenerate(id, prompt);
       }
@@ -171,7 +169,6 @@ export default function App() {
     setPendingDirections(null);
     setBusy(true);
     setError(null);
-    setMessages((m) => [...m, { role: "user", text: `Direction: ${d.title}` }]);
     try {
       await doGenerate(sessionId, pendingBrief, d);
     } catch (e) {
@@ -252,29 +249,22 @@ export default function App() {
     void applySize(POSTER_SIZES[id]);
   };
 
-  const previewRef = useRef<HTMLDivElement>(null);
-  const handleExportPng = async (scale: number) => {
-    const iframe = previewRef.current?.querySelector("iframe");
-    if (!iframe) return;
-    try {
-      await exportPng(iframe as HTMLIFrameElement, size, scale);
-    } catch (e) {
-      setError((e as Error).message);
-    }
-  };
-
-  const handleExportPdf = async () => {
+  // Exports are server-rendered (Playwright) so PNG and PDF match the preview
+  // exactly, including the embedded fonts.
+  const runExport = async (fn: () => Promise<void>) => {
     if (!sessionId) return;
     setExporting(true);
     setError(null);
     try {
-      await exportPdf(sessionId);
+      await fn();
     } catch (e) {
       setError((e as Error).message);
     } finally {
       setExporting(false);
     }
   };
+  const handleExportPng = (scale: number) => runExport(() => exportPng(sessionId!, scale));
+  const handleExportPdf = () => runExport(() => exportPdf(sessionId!));
 
   const promptPlaceholder = started
     ? "Describe a tweak…  (⌘/Ctrl + Enter to send)"
@@ -331,17 +321,17 @@ export default function App() {
           )}
 
           <div className="app__export">
-            <button disabled={!canExport} onClick={() => handleExportPng(2)}>
+            <button disabled={!canExport || exporting} onClick={() => handleExportPng(2)}>
               PNG 2×
             </button>
-            <button disabled={!canExport} onClick={() => handleExportPng(3)}>
+            <button disabled={!canExport || exporting} onClick={() => handleExportPng(3)}>
               PNG 3×
             </button>
-            <button disabled={!canExport} onClick={() => handleExportPng(4)}>
+            <button disabled={!canExport || exporting} onClick={() => handleExportPng(4)}>
               PNG 4×
             </button>
             <button disabled={!canExport || exporting} onClick={handleExportPdf}>
-              {exporting ? "PDF…" : "PDF"}
+              {exporting ? "Exporting…" : "PDF"}
             </button>
           </div>
         </div>
@@ -350,7 +340,7 @@ export default function App() {
       {error && <div className="app__error">{error}</div>}
 
       <main className="app__main">
-        <section className="app__preview" ref={previewRef}>
+        <section className="app__preview">
           {pendingDirections ? (
             <DirectionPicker
               directions={pendingDirections}
