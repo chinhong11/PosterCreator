@@ -22,6 +22,7 @@ import { runDesignTurn, runDirections, DesignError, type ImageBytes } from "./cl
 import { renderPosterPdf, renderPosterPng } from "./export/render.js";
 import { listSummaries } from "./db.js";
 import { fontFaceCss } from "./fonts.js";
+import { authRequired, requireAuth, issueToken, checkPassword } from "./auth.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const UPLOAD_DIR = path.join(__dirname, "..", "uploads");
@@ -40,6 +41,18 @@ if (process.env.TRUST_PROXY) {
 
 app.use(cors());
 app.use(express.json({ limit: "10mb" }));
+
+// Gate the JSON API behind the shared password (no-op when APP_PASSWORD unset).
+// /assets and the public endpoints (config/login/health/fonts) are exempt.
+app.use(requireAuth);
+
+// Whether the client must log in, and the login endpoint itself (both public).
+app.get("/api/config", (_req, res) => res.json({ authRequired }));
+app.post("/api/login", (req, res) => {
+  if (!authRequired) return res.json({ token: "" });
+  if (checkPassword(String(req.body?.password ?? ""))) return res.json({ token: issueToken() });
+  res.status(401).json({ error: "Incorrect password." });
+});
 
 // Serve uploaded images so the rendered poster can reference them by URL.
 app.use("/assets", express.static(UPLOAD_DIR));

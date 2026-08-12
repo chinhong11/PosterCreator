@@ -71,6 +71,8 @@ PosterCreator/
 - ✅ **"Suggest 4 directions"** mode — pick a visual direction before designing
 - ✅ **Embedded web fonts** — 8 OFL font families, identical in preview and PDF
 - ✅ **Persistence** (SQLite) — sessions survive restarts and auto-resume
+- ✅ **"My posters" gallery** — browse and reopen past posters
+- ✅ **Optional password gate** for public hosting (`APP_PASSWORD`)
 - ✅ Per-IP rate limiting on the model-calling endpoints
 
 ### Notes
@@ -89,11 +91,16 @@ PosterCreator/
   id in `localStorage` and auto-resumes it; use **New** to start fresh.
 - **Directions mode** is a first-turn-only toggle: it proposes four distinct
   palette/type/mood directions, and your pick seeds the initial design.
+- **Auth** is an optional shared-password gate: set `APP_PASSWORD` and the UI
+  shows a login screen while the API requires a signed bearer token (30-day
+  expiry, HMAC'd with the password). Unset = open, for local dev. It's a
+  personal-deploy gate, not multi-user accounts — everyone who logs in shares
+  the same posters. The preview iframe's assets (`/assets`, `/api/fonts.css`)
+  stay public so images and fonts load without a token.
+- **My posters** (header button) lists saved sessions from `/api/sessions`;
+  click one to reopen it, or start a new poster.
 - **Deploying behind a proxy?** Set `TRUST_PROXY` (see `.env.example`) so the
   per-IP rate limiter sees the real client IP rather than the proxy's.
-
-Remaining idea (not yet built): a "my posters" gallery UI over the existing
-`/api/sessions` list.
 
 ### Export rendering & Playwright
 

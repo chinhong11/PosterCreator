@@ -13,6 +13,8 @@ import { PosterPreview } from "./components/PosterPreview.js";
 import { ChatPanel } from "./components/ChatPanel.js";
 import { VersionTimeline } from "./components/VersionTimeline.js";
 import { DirectionPicker } from "./components/DirectionPicker.js";
+import { LoginGate } from "./components/LoginGate.js";
+import { Gallery } from "./components/Gallery.js";
 import {
   createSession,
   uploadImage,
@@ -23,6 +25,9 @@ import {
   exportPng,
   suggestDirections,
   loadSession,
+  getConfig,
+  hasToken,
+  setUnauthorizedHandler,
 } from "./api.js";
 
 const LAST_KEY = "poster:lastSession";
@@ -47,6 +52,11 @@ export default function App() {
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Auth + gallery
+  const [authReady, setAuthReady] = useState(false);
+  const [needsAuth, setNeedsAuth] = useState(false);
+  const [showGallery, setShowGallery] = useState(false);
+
   // "Suggest 4 directions" mode.
   const [directionsMode, setDirectionsMode] = useState(false);
   const [pendingDirections, setPendingDirections] = useState<DesignDirection[] | null>(null);
@@ -58,12 +68,35 @@ export default function App() {
   );
   const started = versions.length > 0;
 
-  // Resume the last session on load, if any.
+  // On load: resolve auth, then resume the last session if any.
   useEffect(() => {
-    const last = localStorage.getItem(LAST_KEY);
-    if (last) void resume(last);
+    setUnauthorizedHandler(() => setNeedsAuth(true));
+    (async () => {
+      try {
+        const { authRequired } = await getConfig();
+        if (authRequired && !hasToken()) {
+          setNeedsAuth(true);
+          setAuthReady(true);
+          return;
+        }
+      } catch {
+        // config unreachable — fall through and let API calls surface errors
+      }
+      setAuthReady(true);
+      boot();
+    })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const boot = () => {
+    const last = localStorage.getItem(LAST_KEY);
+    if (last) void resume(last);
+  };
+
+  const onAuthed = () => {
+    setNeedsAuth(false);
+    boot();
+  };
 
   const resume = async (id: string) => {
     setBusy(true);
@@ -266,16 +299,41 @@ export default function App() {
   const handleExportPng = (scale: number) => runExport(() => exportPng(sessionId!, scale));
   const handleExportPdf = () => runExport(() => exportPdf(sessionId!));
 
+  const openFromGallery = (id: string) => {
+    setShowGallery(false);
+    if (id === sessionId) return;
+    localStorage.setItem(LAST_KEY, id);
+    void resume(id);
+  };
+
   const promptPlaceholder = started
     ? "Describe a tweak…  (⌘/Ctrl + Enter to send)"
     : "Describe the poster you want…  (⌘/Ctrl + Enter to send)";
   const canExport = !!renderedHtml && !busy;
 
+  // Render gates: wait for auth resolution, then show login if required.
+  if (!authReady) return <div className="app app--center">Loading…</div>;
+  if (needsAuth) return <LoginGate onAuthed={onAuthed} />;
+
   return (
     <div className="app">
+      {showGallery && (
+        <Gallery
+          currentId={sessionId}
+          onOpen={openFromGallery}
+          onNew={() => {
+            setShowGallery(false);
+            newPoster();
+          }}
+          onClose={() => setShowGallery(false)}
+        />
+      )}
       <header className="app__header">
         <h1>Poster Creator</h1>
         <div className="app__controls">
+          <button onClick={() => setShowGallery(true)} disabled={busy}>
+            My posters
+          </button>
           <button onClick={newPoster} disabled={busy}>
             New
           </button>

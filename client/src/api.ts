@@ -10,6 +10,39 @@ import type {
   UploadResponse,
 } from "@poster/shared";
 
+// ---- Auth token (shared-password gate) ----
+
+const TOKEN_KEY = "poster:token";
+let authToken = localStorage.getItem(TOKEN_KEY) ?? "";
+let onUnauthorized: () => void = () => {};
+
+export function setToken(token: string): void {
+  authToken = token;
+  if (token) localStorage.setItem(TOKEN_KEY, token);
+  else localStorage.removeItem(TOKEN_KEY);
+}
+
+export function hasToken(): boolean {
+  return !!authToken;
+}
+
+/** Register a handler invoked whenever the API returns 401 (token invalid). */
+export function setUnauthorizedHandler(fn: () => void): void {
+  onUnauthorized = fn;
+}
+
+/** fetch wrapper that attaches the bearer token and traps 401s. */
+async function apiFetch(url: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(init.headers);
+  if (authToken) headers.set("Authorization", `Bearer ${authToken}`);
+  const res = await fetch(url, { ...init, headers });
+  if (res.status === 401) {
+    setToken("");
+    onUnauthorized();
+  }
+  return res;
+}
+
 async function json<T>(res: Response): Promise<T> {
   if (!res.ok) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
@@ -18,37 +51,44 @@ async function json<T>(res: Response): Promise<T> {
   return res.json() as Promise<T>;
 }
 
-export async function createSession(size: PosterSize): Promise<string> {
-  const res = await fetch("/api/session", {
+function jsonPost(url: string, body: unknown): Promise<Response> {
+  return apiFetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ size }),
+    body: JSON.stringify(body),
   });
-  const body = await json<CreateSessionResponse>(res);
+}
+
+// ---- Auth endpoints (public) ----
+
+export async function getConfig(): Promise<{ authRequired: boolean }> {
+  const res = await fetch("/api/config");
+  return json<{ authRequired: boolean }>(res);
+}
+
+/** Log in with the shared password; stores the returned token on success. */
+export async function login(password: string): Promise<void> {
+  const res = await fetch("/api/login", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ password }),
+  });
+  const body = await json<{ token: string }>(res);
+  setToken(body.token);
+}
+
+// ---- Sessions ----
+
+export async function createSession(size: PosterSize): Promise<string> {
+  const body = await json<CreateSessionResponse>(await jsonPost("/api/session", { size }));
   return body.sessionId;
 }
 
 export async function uploadImage(sessionId: string, file: File): Promise<UploadResponse> {
   const form = new FormData();
   form.append("image", file);
-  const res = await fetch(`/api/session/${sessionId}/image`, {
-    method: "POST",
-    body: form,
-  });
+  const res = await apiFetch(`/api/session/${sessionId}/image`, { method: "POST", body: form });
   return json<UploadResponse>(res);
-}
-
-export async function generate(
-  sessionId: string,
-  prompt: string,
-  direction?: DesignDirection,
-): Promise<GenerateResponse> {
-  const res = await fetch(`/api/session/${sessionId}/generate`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, direction }),
-  });
-  return json<GenerateResponse>(res);
 }
 
 export interface StreamHandlers {
@@ -67,11 +107,7 @@ export async function streamGenerate(
   direction: DesignDirection | undefined,
   handlers: StreamHandlers,
 ): Promise<void> {
-  const res = await fetch(`/api/session/${sessionId}/generate/stream`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt, direction }),
-  });
+  const res = await jsonPost(`/api/session/${sessionId}/generate/stream`, { prompt, direction });
   if (!res.ok || !res.body) {
     const body = await res.json().catch(() => ({ error: res.statusText }));
     handlers.onError(body.error ?? "Request failed");
@@ -103,41 +139,25 @@ export async function suggestDirections(
   sessionId: string,
   prompt: string,
 ): Promise<DesignDirection[]> {
-  const res = await fetch(`/api/session/${sessionId}/directions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt }),
-  });
+  const res = await jsonPost(`/api/session/${sessionId}/directions`, { prompt });
   return (await json<DirectionsResponse>(res)).directions;
 }
 
 export async function loadSession(sessionId: string): Promise<SessionLoadResponse> {
-  const res = await fetch(`/api/session/${sessionId}`);
-  return json<SessionLoadResponse>(res);
+  return json<SessionLoadResponse>(await apiFetch(`/api/session/${sessionId}`));
 }
 
 export async function listSessions(): Promise<SessionSummary[]> {
-  const res = await fetch("/api/sessions");
-  const body = await json<{ sessions: SessionSummary[] }>(res);
+  const body = await json<{ sessions: SessionSummary[] }>(await apiFetch("/api/sessions"));
   return body.sessions;
 }
 
 export async function rollback(sessionId: string, versionId: string): Promise<GenerateResponse> {
-  const res = await fetch(`/api/session/${sessionId}/rollback`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ versionId }),
-  });
-  return json<GenerateResponse>(res);
+  return json<GenerateResponse>(await jsonPost(`/api/session/${sessionId}/rollback`, { versionId }));
 }
 
 export async function resize(sessionId: string, size: PosterSize): Promise<ResizeResponse> {
-  const res = await fetch(`/api/session/${sessionId}/size`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ size }),
-  });
-  return json<ResizeResponse>(res);
+  return json<ResizeResponse>(await jsonPost(`/api/session/${sessionId}/size`, { size }));
 }
 
 /** Download a server-rendered export (PNG or PDF) — exact font/PDF fidelity. */
@@ -147,11 +167,7 @@ async function downloadExport(
   filename: string,
   body: Record<string, unknown> = {},
 ): Promise<void> {
-  const res = await fetch(`/api/session/${sessionId}/export/${format}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
+  const res = await jsonPost(`/api/session/${sessionId}/export/${format}`, body);
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error ?? "Export failed");
