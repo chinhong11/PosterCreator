@@ -41,6 +41,15 @@ export function ImageDropzone({ onFile, disabled }: Props) {
         onChange={(e) => handleFiles(e.target.files)}
       />
       <div className="dropzone__hint">
+        <svg className="dropzone__icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path
+            d="M4 15.5V17a3 3 0 0 0 3 3h10a3 3 0 0 0 3-3v-1.5M12 3.5v11m0-11L8 7.5m4-4 4 4"
+            stroke="currentColor"
+            strokeWidth="1.6"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
         <strong>Drop an image</strong>
         <span>or click to browse</span>
       </div>

@@ -329,16 +329,21 @@ export default function App() {
         />
       )}
       <header className="app__header">
-        <h1>Poster Creator</h1>
+        <div className="brand">
+          <span className="brand__mark" aria-hidden="true" />
+          <span className="brand__name">
+            Poster<em>Creator</em>
+          </span>
+        </div>
         <div className="app__controls">
-          <button onClick={() => setShowGallery(true)} disabled={busy}>
+          <button className="btn btn--ghost" onClick={() => setShowGallery(true)} disabled={busy}>
             My posters
           </button>
-          <button onClick={newPoster} disabled={busy}>
+          <button className="btn btn--ghost" onClick={newPoster} disabled={busy}>
             New
           </button>
-          <label>
-            Size
+          <label className="field">
+            <span className="field__label">Size</span>
             <select
               value={sizeId}
               disabled={busy}
@@ -372,13 +377,17 @@ export default function App() {
                 disabled={busy}
                 onChange={(e) => setCustomH(Number(e.target.value))}
               />
-              <button disabled={busy} onClick={() => applySize(customSize(customW, customH))}>
+              <button
+                className="btn btn--ghost"
+                disabled={busy}
+                onClick={() => applySize(customSize(customW, customH))}
+              >
                 Apply
               </button>
             </div>
           )}
 
-          <div className="app__export">
+          <div className="segmented" role="group" aria-label="Export">
             <button disabled={!canExport || exporting} onClick={() => handleExportPng(2)}>
               PNG 2×
             </button>
@@ -388,7 +397,11 @@ export default function App() {
             <button disabled={!canExport || exporting} onClick={() => handleExportPng(4)}>
               PNG 4×
             </button>
-            <button disabled={!canExport || exporting} onClick={handleExportPdf}>
+            <button
+              className="segmented__primary"
+              disabled={!canExport || exporting}
+              onClick={handleExportPdf}
+            >
               {exporting ? "Exporting…" : "PDF"}
             </button>
           </div>

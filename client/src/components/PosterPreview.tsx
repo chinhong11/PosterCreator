@@ -62,7 +62,19 @@ export function PosterPreview({ html, size, loading }: Props) {
         </div>
       ) : (
         <div className="preview__empty">
-          {loading ? "Designing your poster…" : "Your poster will appear here."}
+          <svg className="preview__icon" viewBox="0 0 48 48" fill="none" aria-hidden="true">
+            <rect x="8" y="6" width="32" height="36" rx="3" stroke="currentColor" strokeWidth="1.5" />
+            <circle cx="18" cy="17" r="3.2" stroke="currentColor" strokeWidth="1.5" />
+            <path
+              d="M11 34l9-9 6 6 4-4 7 7"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <span>{loading ? "Designing your poster…" : "Your poster will appear here"}</span>
+          {!loading && <small>Drop an image and describe what you want</small>}
         </div>
       )}
       {loading && html && <div className="preview__overlay">Updating…</div>}
