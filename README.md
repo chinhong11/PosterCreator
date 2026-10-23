@@ -1,16 +1,16 @@
 # Poster Creator
 
-Drop an image, describe the poster you want, and Claude designs it as editable
-HTML/CSS/SVG. Then keep prompting to refine specific parts — "make the title
-bigger", "use a navy background", "move the photo left" — and Claude edits just
-that, leaving the rest intact. Export the result as PNG.
+Drop an image, describe the poster you want, and an AI model (Claude or Gemini)
+designs it as editable HTML/CSS/SVG. Then keep prompting to refine specific
+parts — "make the title bigger", "use a navy background", "move the photo
+left" — and it edits just that, leaving the rest intact. Export as PNG or PDF.
 
 See [`PLAN.md`](./PLAN.md) for the full design rationale and roadmap.
 
 ## How it works
 
-Claude is a language model, not an image generator — but a poster is layout +
-typography + color + imagery, all expressible as HTML/CSS/SVG. So Claude designs
+The model is a language model, not an image generator — but a poster is layout +
+typography + color + imagery, all expressible as HTML/CSS/SVG. So the model designs
 the poster as a self-contained HTML document with your image embedded, the
 browser renders it live at real poster dimensions, and every follow-up prompt
 edits the current design in place. This gives true iterative design instead of
@@ -18,19 +18,43 @@ regenerating a whole raster image each time.
 
 - **Frontend** — React + Vite + TypeScript (`client/`)
 - **Backend** — Express + TypeScript, holds the API key and conversation state (`server/`)
-- **Model** — `claude-opus-5` with vision input for your uploaded image
+- **Model** — Claude (`claude-opus-5`, default) or Gemini, chosen with
+  `LLM_PROVIDER`; either sees your uploaded image
 
 ## Prerequisites
 
 - Node.js 20+
-- An Anthropic API key (or an `ant auth login` profile)
+- An Anthropic API key (or an `ant auth login` profile) **or** a Gemini API key
 
 ## Setup
 
 ```bash
-npm install                       # installs all workspaces
-cp server/.env.example server/.env   # then set ANTHROPIC_API_KEY
+npm install                          # installs all workspaces
+cp server/.env.example server/.env   # then fill in your provider + key
+npx playwright install chromium      # once, for PNG/PDF export
 ```
+
+### Choosing the model
+
+In `server/.env`:
+
+```bash
+# Claude (default)
+LLM_PROVIDER=anthropic
+ANTHROPIC_API_KEY=sk-ant-...
+
+# — or Gemini —
+LLM_PROVIDER=gemini
+GEMINI_API_KEY=...
+GEMINI_MODEL=...   # required: a Gemini model ID your key can use
+```
+
+The server logs which provider and model it's using at startup, and refuses to
+start with a clear message if the chosen provider is missing a setting. Only
+the model calls differ (`server/src/llm/`); the design instructions, streaming,
+exports, persistence, and auth are shared. Two differences with Gemini: prompt
+caching is Claude-only, so long editing sessions cost a bit more; and the design
+instructions were tuned on Claude, so expect some tuning for best results.
 
 ## Run (development)
 
@@ -50,8 +74,9 @@ and iterate. The Vite dev server proxies `/api` and `/assets` to the backend.
 PosterCreator/
 ├── PLAN.md            # design doc & roadmap
 ├── shared/            # types shared by client & server
-├── server/            # Express API + Claude integration
-│   └── src/claude/    # system prompt + generation logic
+├── server/            # Express API
+│   ├── src/design/    # system prompt + design/directions logic
+│   └── src/llm/       # model providers: Claude and Gemini adapters
 └── client/            # React SPA
     └── src/components # Dropzone, Preview, ChatPanel, VersionTimeline
 ```

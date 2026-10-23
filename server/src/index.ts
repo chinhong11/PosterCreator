@@ -1,3 +1,4 @@
+import "./env.js"; // must stay first: loads server/.env before other modules read it
 import express from "express";
 import cors from "cors";
 import multer from "multer";
@@ -18,7 +19,8 @@ import {
   type UploadResponse,
 } from "@poster/shared";
 import { createSession, getSession, addImage, persist } from "./sessions.js";
-import { runDesignTurn, runDirections, DesignError, type ImageBytes } from "./claude/generate.js";
+import { runDesignTurn, runDirections, DesignError, type ImageBytes } from "./design/generate.js";
+import { getProvider, type LlmProvider } from "./llm/index.js";
 import { renderPosterPdf, renderPosterPng } from "./export/render.js";
 import { listSummaries } from "./db.js";
 import { fontFaceCss } from "./fonts.js";
@@ -411,9 +413,22 @@ app.post("/api/session/:id/export/png", async (req, res) => {
 
 app.get("/api/health", (_req, res) => res.json({ ok: true }));
 
+// Resolve the model provider up front so a misconfiguration fails at startup
+// with a readable message, not on the first poster.
+function loadProvider(): LlmProvider {
+  try {
+    return getProvider();
+  } catch (err) {
+    console.error(`Configuration error: ${(err as Error).message}`);
+    process.exit(1);
+  }
+}
+const provider = loadProvider();
+
 app.listen(PORT, () => {
   console.log(`Poster Creator API listening on http://localhost:${PORT}`);
-  if (!process.env.ANTHROPIC_API_KEY) {
+  console.log(`Model provider: ${provider.name} (${provider.model})`);
+  if (provider.name === "Claude" && !process.env.ANTHROPIC_API_KEY) {
     console.warn(
       "ANTHROPIC_API_KEY is not set. The SDK will try an `ant auth login` profile; " +
         "if you have neither, generation will fail.",
